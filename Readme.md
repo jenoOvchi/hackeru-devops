@@ -198,4 +198,33 @@ ip address
 exit
 ```
 
-В Web интерфейсе Jenkins в меню настройки перейдём на форму "Управление средами сборки" и нажмём кнопку "Новый узел". В поле "Название узла" введём "test-agent", установим флаг "Permanent Agent" и нажмём кнопку "ОК". В поле "Корень удаленной ФС" введём "/home/vagrant", в листбоксе "Способ запуска" выберем "Launch agents via SSH", в поле "Host" введём "192.168.10.3", нажмём кнопку "Add" справа от листбокса "Credentials" и выберем "Jenkins" из списка. В появившемся окне создания авторизационных данных выберем Scope "Global", укажем Username "vagrant", Password "vagrant", ID "vagrant", Description "Vagrant Credentials" и нажмём кнопку "Add". В листбоксе "Host Key Verification Strategy" выберем пункт "Non verifying" и нажмём кнопку "Save". Нажмём на ссылку "test-agent" созданного агента и нажмём кнопку "Launch Agent". Перейдём в главное меню и обратим внимание, что в списке "Состояние сборщиков" появился активный сборщик "test-agent".
+В Web интерфейсе Jenkins в меню настройки перейдём на форму "Управление средами сборки" и нажмём кнопку "Новый узел". В поле "Название узла" введём "test-agent", установим флаг "Permanent Agent" и нажмём кнопку "ОК". В листбоксе "Способ запуска" выберем "Launch agents via SSH", в поле "Host" введём "192.168.10.3", нажмём кнопку "Add" справа от листбокса "Credentials" и выберем "Jenkins" из списка. В появившемся окне создания авторизационных данных выберем Scope "Global", укажем Username "vagrant", Password "vagrant", ID "vagrant", Description "Vagrant Credentials" и нажмём кнопку "Add". В листбоксе "Host Key Verification Strategy" выберем пункт "Non verifying" и нажмём кнопку "Save". Нажмём на ссылку "test-agent" созданного агента и нажмём кнопку "Launch Agent". Перейдём в главное меню и обратим внимание, что в списке "Состояние сборщиков" появился активный сборщик "test-agent".
+
+Переходим в меню настроек и снова открываем форму "Консоль сценариев". Введём с область ввода скрипт диагностики удалённых агентов и нажмём кнопку "Запустить":
+```groovy
+import hudson.util.RemotingDiagnostics
+import jenkins.model.Jenkins
+
+String agent_name = 'test-agent'
+groovy_script = '''
+println System.getenv("PATH")
+println "uname -a".execute().text
+'''.trim()
+
+String result
+Jenkins.instance.slaves.find { agent ->
+    agent.name == agent_name
+}.with { agent ->
+    result = RemotingDiagnostics.executeGroovy(groovy_script, agent.channel)
+}
+println result
+```
+Изучим результат выполнения скрипта в разделе "Результат". Перейдём в главное меню.
+
+Для работы с удалёнными репозиториями Git установим Git на узел Slave. Для этого перейдём по SSH на узел Slave (логин и пароль vagrant) и установим нужный пакет:
+```bash
+ssh vagrant@192.168.10.3
+sudo yum install git
+```
+
+Создадим задачу для загрузки удалённого репозитория с приложением. Нажимаем кнопку "Создать Item", на открывшейся форме вводим имя задачи (например, Build-bookapp), выбираем пункт "Создать задачу со свободной конфигурацией" и нажимаем на кнопку "OK". На открывшейся форме заполняем раздел "Описание" (например, Job for build actual version of bookapp application). Далее переходим в раздел "Управление исходным кодом", выбираем пукт "Git" и в поле "Repository URL" вводим адрес репозитория (https://github.com/jenoOvchi/hackeru-devops.git). Переходим в раздел "Сборка", нажимаем на кнопку "Добавить шаг сборки", выбираем пункт "Выполнить команду Shell", вводим тестовую команду для проверки того, что репозиторий выкачан (например, ls) и нажимаем кнопку "Сохранить". Нажимаем кнопку "Собрать сейчас" и в разделе "История сборок" переходим в созданную сборку. Нажимаем на логотип Jenkins и переходим в главное меню.
