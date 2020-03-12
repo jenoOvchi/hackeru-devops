@@ -423,7 +423,7 @@ sudo yum install -y yum-utils \
 sudo yum-config-manager \
     --add-repo \
     https://download.docker.com/linux/centos/docker-ce.repo
-
+sudo yum install -y docker-ce docker-ce-cli containerd.io
 sudo systemctl enable --now docker
 ```
 
@@ -439,9 +439,7 @@ sudo vi /lib/systemd/system/docker.service
 
 ```ini
 ...
-ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock \
-          -H tcp://0.0.0.0:4243 \ 
-          -H unix:///var/run/docker.sock
+ExecStart=/usr/bin/dockerd -H tcp://0.0.0.0:4243 -H unix:///var/run/docker.sock -H fd:// --containerd=/run/containerd/containerd.sock 
 ...
 ```
 
@@ -449,6 +447,11 @@ ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
 ```bash
 sudo systemctl daemon-reload
 sudo service docker restart
+```
+
+Проверим доступность API Docker:
+```bash
+curl localhost:4243/version
 ```
 
 Устанавливаем Docker Compose:
@@ -583,5 +586,4 @@ sudo docker ps
 Откроем официальную документацию Jenkins (https://jenkins.io/doc/book/pipeline/) и изучим раздел, относящийся к пайплайнам.
 
 Создадим задачу под название bookapp-pipeline и типом Pipeline. Сохраним и перейдём в раздел меню "Pipeline Syntax". Откроем в соседней вкладке старую задачу доставки обновлений и изучим реализацию её шагов с помощью пайплайна. Для этого выберем нужные шаги, заполним ожидаемые поля и нажмём кнопку "Generate Pipeline Script".
-
 
