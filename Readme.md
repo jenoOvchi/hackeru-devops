@@ -229,7 +229,7 @@ sudo yum install git
 
 ### Создание задачи сборки
 
-Создадим задачу для загрузки удалённого репозитория с приложением. Нажимаем кнопку "Создать Item", на открывшейся форме вводим имя задачи (например, Build-bookapp), выбираем пункт "Создать задачу со свободной конфигурацией" и нажимаем на кнопку "OK". На открывшейся форме заполняем раздел "Описание" (например, Job for build actual version of bookapp application). Далее переходим в раздел "Управление исходным кодом", выбираем пукт "Git" и в поле "Repository URL" вводим адрес репозитория (например, https://github.com/go-training/helloworld.git). Переходим в раздел "Сборка", нажимаем на кнопку "Добавить шаг сборки", выбираем пункт "Выполнить команду Shell", вводим тестовую команду для проверки того, что репозиторий выкачан (например, ls) и нажимаем кнопку "Сохранить". Нажимаем кнопку "Собрать сейчас" и в разделе "История сборок" переходим в созданную сборку. Нажимаем на логотип Jenkins и переходим в главное меню.
+Создадим задачу для загрузки удалённого репозитория с приложением. Нажимаем кнопку "Создать Item", на открывшейся форме вводим имя задачи (например, Build-bookapp), выбираем пункт "Создать задачу со свободной конфигурацией" и нажимаем на кнопку "OK". На открывшейся форме заполняем раздел "Описание" (например, Job for build actual version of bookapp application). Далее переходим в раздел "Управление исходным кодом", выбираем пукт "Git" и в поле "Repository URL" вводим адрес репозитория (например, https://github.com/jenoOvchi/bookapp.git). Переходим в раздел "Сборка", нажимаем на кнопку "Добавить шаг сборки", выбираем пункт "Выполнить команду Shell", вводим тестовую команду для проверки того, что репозиторий выкачан (например, ls) и нажимаем кнопку "Сохранить". Нажимаем кнопку "Собрать сейчас" и в разделе "История сборок" переходим в созданную сборку. Нажимаем на логотип Jenkins и переходим в главное меню.
 
 Модифицируем задачу для запуска сборки и сохранения собранных артефактов. Для этого установим Go на Slave Jenkins. В консоли перейдём по SSH на узел Slave (логин и пароль vagrant) и установим нужные пакеты:
 ```bash
@@ -355,10 +355,10 @@ go tool cover -html=coverprofile.out -o report.html
 
 ### Доставка обновлений
 
-Настроим установку обновления на тестовый стенд. Для этого будем использовать узел Slave в качестве стенда, на который будет производиться установка обновлений. Установим плагин для публикации HTML отчётов. Для этого перейдём в меню настройки, откроем форму "Управление плагинами", перейдём во вкладку "Доступные", в сторке фильтра введём "ssh", поставим флаг напротив "Publish Over SSH" и нажмём кнопку "Установить без перезагрузки". После завершения установки перейдём в меню настройки, откроем форму "Конфигурация системы" и перейдём в раздел "Publish over SSH". Для настройки нам потребуется создать SSH ключ для подключения к узлу Slave. На узле Master создадим связку публичного и приватного ключей для пользователя jenkins:
+Настроим установку обновления на тестовый стенд. Для этого будем использовать узел Slave в качестве стенда, на который будет производиться установка обновлений. Установим плагин для публикации артефактов по SSH. Для этого перейдём в меню настройки, откроем форму "Управление плагинами", перейдём во вкладку "Доступные", в сторке фильтра введём "ssh", поставим флаг напротив "Publish Over SSH" и нажмём кнопку "Установить без перезагрузки". После завершения установки перейдём в меню настройки, откроем форму "Конфигурация системы" и перейдём в раздел "Publish over SSH". Для настройки нам потребуется создать SSH ключ для подключения к узлу Slave. На узле Master создадим связку публичного и приватного ключей для пользователя jenkins:
 ```bash
 sudo -u jenkins ssh-keygen
-> Enter file in which to save the key (/root/.ssh/id_rsa):
+> Enter file in which to save the key (/var/lib/jenkins/.ssh/id_rsa):
 > Enter passphrase (empty for no passphrase): !QAZ2wsx
 > Enter same passphrase again: !QAZ2wsx
 ```
@@ -372,6 +372,7 @@ sudo -u jenkins ssh-copy-id vagrant@192.168.10.3
 ```bash
 PID=$(ps -ef | grep hello | grep -v grep | awk '{print $2}')
 if [[ ! -z "$PID" ]]; then kill -9 $PID; fi
+chmod +x hello
 nohup /home/vagrant/hello > hello.log 2>&1 &
 ```
 
@@ -406,3 +407,181 @@ Test Results: http://127.0.0.1:8080/job/Build-bookapp/$BUILD_NUMBER/testReport/
 
 #### Задание:
 Настроить нотификацию о сборке и доставке приложения "bookapp", разрабатываемого в рамках курса.
+
+### Интеграция с Docker
+
+Удаляем узел Slave и в дальнейшем создаём слэйвы динамически.
+
+Устанавливаем плагины Docker и Docker Compose Build Step.
+
+Устанавливаем Docker на узле Slave:
+```bash
+vagrant ssh slave
+sudo yum install -y yum-utils \
+  device-mapper-persistent-data \
+  lvm2
+sudo yum-config-manager \
+    --add-repo \
+    https://download.docker.com/linux/centos/docker-ce.repo
+
+sudo systemctl enable --now docker
+```
+
+Проверяем работоспособность Docker на узле Slave:
+```bash
+sudo docker ps
+```
+
+Делаем API Docker доступным извне:
+```bash
+sudo vi /lib/systemd/system/docker.service
+```
+
+```ini
+...
+ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock \
+          -H tcp://0.0.0.0:4243 \ 
+          -H unix:///var/run/docker.sock
+...
+```
+
+Применяем внесённые изменения:
+```bash
+sudo systemctl daemon-reload
+sudo service docker restart
+```
+
+Устанавливаем Docker Compose:
+```bash
+sudo curl -L "https://github.com/docker/compose/releases/download/1.25.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+```
+
+Проверка корректности установки Docker Compose:
+```bash
+docker-compose --version
+```
+
+В интерфейсе Jenkins в меню настроек на форме "Конфигурация системы" в разделе "Cloud" настраиваем создание слэйвов с помощью Docker. Для этого:
+- создаём новое облако типа "Docker" с именем "docker";
+- в поле "Docker Host URI" вводим "tcp://192.168.10.3:4243" и нажимаем кнопку "Test Connection";
+- ставим флаги напротив "Enabled" и "Expose DOCKER_HOST";
+- в область "Docker Agent templates" добавляем тестовый шаблон слэйва со следующими параметрами:
+Docker Agent templates Labels: java-docker-slave
+Enabled: yes
+Name: java-docker-slave
+Docker Image: java-docker-slave
+Remote File System Root: /home/jenkins
+Connect method: Connect with SSH
+SSH key: Use configured SSH credentials
+SSH Credentials: jenkins/jenkins
+Host Key Verification Strategy: Non verifying Verification Strategy
+
+Создаём задачу для проверки работоспособности запуска слэйвов с помощью Docker:
+Имя: docker-test
+Тип: задача со свободной конфигурацией
+Описание: Docker Test Job
+Ограничить лейблы сборщиков, которые могут исполнять данную задачу: yes
+Label Expression: java-docker-slave
+Шаги сборки:
+- Выполнить команду shell: echo "It Works!"
+
+Запустим задачу и проверим, что она отработала успешно. Параллельно с запуском на узле Slave проверим, что запустился контейнер для выполнения сборки:
+```bash
+sudo docker ps
+```
+
+После выполнения задачи проверим, что контейнер удалён:
+```bash
+sudo docker ps
+```
+
+Добавим метку "master" для узла Master.
+
+Используем плагин Docker для сборки образов и запуска контейнеров. Для этого в задачу добавим следующие разделы:
+Ограничить лейблы сборщиков, которые могут исполнять данную задачу: yes
+Label Expression: master
+Управление исходным кодом: Git
+Repositories: https://github.com/jenoOvchi/bookapp.git
+Шаг сборки: Build / Publish Docker Image
+Directory for Dockerfile: .
+Cloud: docker
+Image: bookapp:v1
+Pull base image: yes
+Шаг сборки: Send files or execute commands over SSH
+Name: Slave
+Source files: docker-compose.yml
+Exec command: sudo docker-compose up -d
+Exec command: sudo docker ps (ещё один блок Transfer Set)
+
+Запустим задачу и изучим лог сборки. Проверим состав запущенных контейнеров.
+
+Остановим все запущенные контейнеры и попробуем запустить приложение с помощью плагина Docker:
+```bash
+sudo docker stop $(sudo docker ps -a -q)
+sudo docker rm $(sudo docker ps -a -q)
+```
+
+Внесём в задачу следующие изменения:
+Label Expression: java-docker-slave
+Удалим шаг сборки: Send files or execute commands over SSH
+Добавим шаг сборки: Start / Stop Docker Containers
+Action to choose: Run Container
+Docker Cloud: Cloud this build is running on
+Docker Image: bookapp:v1
+
+Запустим задачу и изучим лог сборки. Лог повествует о том, что данный шаг не работает без реестра образов Docker. Развернём его:
+```bash
+sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2
+```
+
+Проверим работоспособность реестра:
+```bash
+sudo docker pull ubuntu:16.04
+sudo docker tag ubuntu:16.04 localhost:5000/my-ubuntu
+sudo docker push localhost:5000/my-ubuntu
+sudo docker image remove ubuntu:16.04
+sudo docker image remove localhost:5000/my-ubuntu
+sudo docker pull localhost:5000/my-ubuntu
+```
+
+Добавим развёрнутый реестр в доверенный список небезопасных репозиториев:
+```bash
+sudo vi /etc/docker/daemon.json
+```
+
+```json
+{
+  "insecure-registries" : ["192.168.10.3:5000"]
+}
+```
+
+Применяем внесённые изменения:
+```bash
+sudo systemctl daemon-reload
+sudo service docker restart
+```
+
+Добавим в задачу шаг загрузки образа и скорректируем имена образов:
+Шаг сборки: Build / Publish Docker Image
+Image: 192.168.10.3:5000/bookapp:v1
+Push image: yes
+Шаг сборки: Start / Stop Docker Containers
+192.168.10.3:5000/bookapp:v1
+
+Запустим задачу и изучим лог сборки. После выполнения задачи проверим, что контейнер запущен:
+```bash
+sudo docker ps
+```
+
+#### Задание
+Настроить хранение образов реестра на локальном диске и взаимодействие по протоколу HTTPS (https://docs.docker.com/registry/deploying/).
+
+### Работа с pipeline
+
+Откроем официальную документацию Jenkins (https://jenkins.io/doc/book/pipeline/) и изучим раздел, относящийся к пайплайнам.
+
+Создадим задачу под название bookapp-pipeline и типом Pipeline. Сохраним и перейдём в раздел меню "Pipeline Syntax". Откроем в соседней вкладке старую задачу доставки обновлений и изучим реализацию её шагов с помощью пайплайна. Для этого выберем нужные шаги, заполним ожидаемые поля и нажмём кнопку "Generate Pipeline Script".
+
+
