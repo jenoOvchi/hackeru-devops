@@ -657,7 +657,7 @@ sudo docker tag bookapp:v1 192.168.10.3:8083/bookapp:v1
 
 Загружаем образ из локального репозитория в Nexus:
 ```bash
-docker push 192.168.10.3:8083/bookapp:v1
+sudo docker push 192.168.10.3:8083/bookapp:v1
 ```
 
 В Web интерфейсе откроем меню "Browse", перейдём в реестр "docker-private" и изучим его содержимое.
@@ -805,23 +805,63 @@ sudo systemctl start sonar
 
 Откроем в браузере Web интерфейс SonarQube (http://192.168.10.3/) и авторизуемся (admin/admin). Изучим его интерфейс. 
 
-Login: jenkins
-Name: jenkins
-Password: !QAZ2wsx
+Создадим сервисного пользователя "jenkins" в SonarQube со следующими параметрами:
+- Login: jenkins
+- Name: jenkins
+- Password: !QAZ2wsx
 
-Generate Tokens, jenkins, Generate, Copy
+Нажмём на кнопку создания токена и сгенерируем токен для аутентификации из пайплайна:
+Generate Tokens _> jenkins -> Generate -> Copy:
 77e19242a0ae764b311e3dbdb640ed2d0b1430ce
 
-SonarQube Scanner
+Установим на сервер Jenkins плагин "SonarQube Scanner". В настройках системы в разделе SonarQube server нажмём кнопку "Add SonarQube" и добавим сервер со следующими параметрами:
+- Name: sonarqube
+- Server URL: p:/htt/192.168.10.3
+- Credentials:
+    - Kind: Secret text
+    - Scope: Global
+    - Secret: 77e19242a0ae764b311e3dbdb640ed2d0b1430ce
+    - ID: sonarqube
+    - Description: sonarqube
 
-SonarQube servers, Add SonarQube
+В настройках глобальных инструментов в разделе "SonarQube Scanner" нажмём на кнопку "Добавить SonarQube Scanner" и создадим сканнер с именем "sonarqube".
 
-Name: sonarqube
-Server URL: http://192.168.10.3
+Создадим пайплайн со следующими настройками:
+```bash
+pipeline {
+    agent any
 
-Kind: Secret text
-Scope: Global
-Secret: 77e19242a0ae764b311e3dbdb640ed2d0b1430ce
-ID: sonarqube
-Description: sonarqube
+    environment {
+        DOCKER_IMAGE_NAME = "bookapp"
+    }
 
+    stages {
+        stage("Checkout") {
+            steps {
+              git url: 'https://github.com/jenoOvchi/bookapp' 
+              }
+            }
+
+        stage("SonarQube Analysis") {
+            steps {
+                script {
+                    def scannerHome = tool 'sonarqube';
+                    withSonarQubeEnv('sonarqube') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=project -Dsonar.sources=."
+                    }
+                }
+            }
+        }
+
+        stage("Docker Build and Test") {
+            steps {
+                script {
+                    docker.withServer('tcp://192.168.10.3:4243') {
+                        app = docker.build(DOCKER_IMAGE_NAME)
+                        }
+                    }
+                }
+            }
+        }
+}
+```
