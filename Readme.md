@@ -109,7 +109,7 @@ pipeline {
 
                 echo "TEST_VARIABLE = ${env.TEST_VARIABLE}"
 
-                withEnv(["ANOTHER_ENV_VAR=here is some value"]) {
+                withEnv(["NOTHER_ENV_VAR=here is some value"]A) {
                     echo "ANOTHER_ENV_VAR = ${env.ANOTHER_ENV_VAR}"
                 }
             }
@@ -307,7 +307,7 @@ pipeline {
               }
             }
 
-        stage("Docker Build and Test") {
+        stage("Docker Build") {
             steps {
                 script {
                     docker.withServer('tcp://192.168.10.3:4243') {
@@ -391,6 +391,7 @@ pipeline {
       steps {
         sh "env"
       }
+    }
 ...
 ```
 
@@ -398,13 +399,20 @@ pipeline {
 
 # Nexus, Artifactory, SonarQube
 
+## Sonatype Nexus
+
+Остановим запущенный Docker Registry:
+```bash
+sudo docker ps | grep registry:2 | awk '{print $1}' | xargs sudo docker rm -f
+```
+
 Обновим пакетный менеджер и установим wget:
 ```bash
 sudo yum update -y
 sudo yum install wget -y
 ```
 
-Установим Java:
+Установим Java (только если не установлена ранее):
 ```bash
 sudo yum install java-1.8.0-openjdk.x86_64 -y
 ```
@@ -422,6 +430,7 @@ sudo wget -O nexus.tar.gz https://download.sonatype.com/nexus/3/latest-unix.tar.
 Разархивируем дистрибутив Sonatype Nexus и переименуем его директорию:
 ```bash
 sudo tar -xvf nexus.tar.gz && sudo mv nexus-3* nexus
+sudo mv sonatype-work nexusdata
 ```
 
 Создадим сервисного пользователя для Sonatype Nexus:
@@ -432,7 +441,7 @@ sudo adduser nexus
 Объявим сервисного пользователя владельцем для соответствующих директорий Sonatype Nexus:
 ```bash
 sudo chown -R nexus:nexus /app/nexus
-sudo chown -R nexus:nexus /app/sonatype-work
+sudo chown -R nexus:nexus /app/nexusdata
 ```
 
 Скорректируем пользователях в параметрах запуска Nexus:
@@ -442,7 +451,6 @@ sudo vi  /app/nexus/bin/nexus.rc
 
 ```ini
 run_as_user="nexus"
-...
 ```
 
 Скорректируем параметрs запуска Java машины для Nexus:
@@ -455,18 +463,40 @@ sudo vi /app/nexus/bin/nexus.vmoptions
 -Xmx512m
 -XX:MaxDirectMemorySize=512m
 -XX:+UnlockDiagnosticVMOptions
--XX:+UnsyncloadClass
 -XX:+LogVMOutput
--XX:LogFile=../sonatype-work/nexus3/log/jvm.log
+-XX:LogFile=../nexusdata/nexus3/log/jvm.log
 -XX:-OmitStackTraceInFastThrow
 -Djava.net.preferIPv4Stack=true
 -Dkaraf.home=.
 -Dkaraf.base=.
 -Dkaraf.etc=etc/karaf
 -Djava.util.logging.config.file=etc/karaf/java.util.logging.properties
--Dkaraf.data=/nexus/nexus-data
--Djava.io.tmpdir=../sonatype-work/nexus3/tmp
+-Dkaraf.data=../nexusdata/nexus3
+-Dkaraf.log=../nexusdata/nexus3/log
+-Djava.io.tmpdir=../nexusdata/nexus3/tmp
 -Dkaraf.startLocalConsole=false
+```
+
+Настроим лимиты для оптимизации работы Nexus:
+```bash
+sudo vi /app/nexus/etc/nexus-default.properties
+```
+
+```ini
+...
+application-host=192.168.10.3
+...
+```
+
+Настроим лимиты для оптимизации работы Nexus:
+```bash
+sudo vi /etc/security/limits.conf
+```
+
+```ini
+...
+nexus - nofile 65536
+...
 ```
 
 Создадим описание для запуска Nexus как сервиса:
@@ -499,7 +529,299 @@ sudo chkconfig nexus on
 sudo systemctl start nexus
 ```
 
+Изучаем логи Sonatype Nexus и ждём сообщения о старте (Started Sonatype Nexus OSS ...):
+```bash
+tail -f /app/nexusdata/nexus3/log/nexus.log
+```
+
 Проверим доступность Web консоли Sonatype Nexus:
 ```bash
-curl http://localhost:8081
+curl http://192.168.10.3:8081
 ```
+
+Выводим в консоль пароль пользователя "admin":
+```bash
+cat /app/nexusdata/nexus3/admin.password
+```
+
+Открываем web интерфейс (http://192.168.10.3:8081/) Sonatype Nexus в браузере и авторизуемся под пользователем admin. Проходим процедуру настройки:
+- обновляем пароль (например, !QAZ2wsx);
+- ставим флаг рядом с "Enable anonymous access".
+
+Откроем меню настроек, в разделе "Repositories" нажмём кнопку "Create repository" и создадим репозиторий go (proxy) со следующими параметрами:
+- Name: go-proxy
+- Remote storage: https://gonexus.dev
+
+Откроем меню "Browse" и изучим список репозиториев. Появился репозиторий go-proxy, статус которого "Online - Remote Available". Нажмём на кнопку "copy" в его строке и скопируем ссылку на этот репозиторий "http://192.168.10.3:8081/repository/go-proxy/".
+
+Перейдём на узел Slave и установим Go (если его сейчас там нет):
+```bash
+vagrant ssh slave
+sudo yum install -y wget
+wget https://dl.google.com/go/go1.13.3.linux-amd64.tar.gz
+tar -xzf go1.13.3.linux-amd64.tar.gz
+sudo mv go /usr/local
+mkdir Projects
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/Projects
+export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+```
+
+Проверим корректность установки:
+```bash
+go version
+go env
+```
+
+Установим переменную окружения для использования проксирующего репозитория:
+```bash
+go env -w GOPROXY=http://192.168.10.3:8081/repository/go-proxy,direct
+```
+
+Клонируем проект Go для сборки:
+```bash
+mkdir -p /tmp/go-demo
+cd /tmp/go-demo/
+git clone https://github.com/gobuffalo/buffalo.git
+ls
+```
+
+Соберём клонированный проект:
+```bash
+cd buffalo/
+go build
+```
+
+В Web интерфейсе Nexus откроем меню "Browse" и изучим содержимое репозитория go-proxy. Откроем папку "cloud.google.com/go" и изучим её содержимое. Сравним с файлами, скачанными на файловую систему. Установим пакет "tree":
+```bash
+sudo yum install -y tree
+```
+
+Перейдём в папку со скачанными пакетами Go и выведем её содержимое:
+```bash
+cd /home/vagrant/Projects/pkg/mod/cache/download/cloud.google.com
+tree
+```
+
+В Web интерфейсе Nexus откроем меню настроек, в разделе "Repositories" нажмём кнопку "Create repository" и создадим репозиторий docker (proxy) со следующими параметрами:
+- Name: docker-proxy
+- Docker Index: Use Docker Hub
+
+Ещё раз нажмём кнопку "Create repository" и создадим репозиторий docker (hosted) со следующими параметрами:
+- Name: docker-private
+- HTTP: Yes
+- Port: 8083
+
+Ещё раз нажмём кнопку "Create repository" и создадим репозиторий docker (group) со следующими параметрами:
+- Name: docker-group
+- HTTP: Yes
+- Port: 8082
+Group.Members: docker-proxy, docker-private
+
+Откроем меню "Browse" и изучим список репозиториев. Появились репозитории docker-proxy, docker-private и docker-group, статус которых "Online" и "Online - Remote Available".
+
+Перейдём на узел Slave настроем Docker для работы с Nexus. Для этого добавим адреса группы и прокси репозитория в список известных небезопасных реестров:
+```bash
+sudo vi /etc/docker/daemon.json
+```
+
+```json
+{
+  "insecure-registries" : ["192.168.10.3:8082", "192.168.10.3:8083"]
+}
+```
+
+Перезапустим Docker:
+```bash
+sudo systemctl daemon-reload
+sudo service docker restart
+```
+
+Авторизуемся в обоих реестрах Docker (admin/!QAZ2wsx):
+```bash
+sudo docker login 192.168.10.3:8082
+sudo docker login 192.168.10.3:8083
+```
+
+Скачиваем образ с Docker Hub, используя проксирующий реестр:
+```bash
+sudo docker pull 192.168.10.3:8082/alpine:latest
+```
+
+В Web интерфейсе откроем меню "Browse", перейдём в реестр "docker-proxy" и изучим его содержимое.
+
+Тегируем имеющийся образ тегом с адресом Nexus:
+```bash
+sudo docker tag bookapp:v1 192.168.10.3:8083/bookapp:v1
+```
+
+Загружаем образ из локального репозитория в Nexus:
+```bash
+docker push 192.168.10.3:8083/bookapp:v1
+```
+
+В Web интерфейсе откроем меню "Browse", перейдём в реестр "docker-private" и изучим его содержимое.
+
+#### Задание:
+Настроить загрузку артефактов в рамках пайплайна в Sonatype Nexus для приложения "bookapp", разрабатываемого в рамках курса.
+
+## SonarQube
+
+Скачаем установщик Postgresql:
+```bash
+sudo rpm -Uvh https://download.postgresql.org/pub/repos/yum/9.6/redhat/rhel-7-x86_64/pgdg-centos96-9.6-3.noarch.rpm
+```
+
+Установим Postgresql:
+```bash
+sudo yum -y install postgresql96-server postgresql96-contrib
+```
+
+Настроим Postgresql:
+```bash
+sudo vi /var/lib/pgsql/9.6/data/pg_hba.conf
+```
+
+```ini
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# "local" is for Unix domain socket connections only
+local   all             all                                     trust
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            md5
+# IPv6 local connections:
+host    all             all             ::1/128                 md5
+```
+
+Запустим Postgresql:
+```bash
+sudo systemctl start postgresql-9.6
+sudo systemctl enable postgresql-9.6
+```
+
+Создадим пользователя "postgres":
+```bash
+sudo passwd postgres
+```
+
+Настроим базу данных для SonarQube:
+```bash
+su - postgres
+createuser sonar
+psql
+```
+
+```bash
+ALTER USER sonar WITH ENCRYPTED password '!QAZ2wsx';
+CREATE DATABASE sonar OWNER sonar;
+\q
+```
+
+Скачаем установщик SonarQube:
+```bash
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-6.4.zip
+```
+
+Установим SonarQube:
+```bash
+sudo yum -y install unzip
+sudo unzip sonarqube-6.4.zip -d /opt
+sudo mv /opt/sonarqube-6.4 /opt/sonarqube
+```
+
+Настроим SonarQube:
+```bash
+sudo vi /opt/sonarqube/conf/sonar.properties
+```
+
+```bash
+sonar.jdbc.username=sonar
+sonar.jdbc.password=!QAZ2wsx
+sonar.jdbc.url=jdbc:postgresql://localhost/sonar
+```
+
+Создадим юнит для запуска SonarQube как сервиса:
+```bash
+sudo vi /etc/systemd/system/sonar.service
+```
+
+```ini
+[Unit]
+Description=SonarQube service
+After=syslog.target network.target
+
+[Service]
+Type=forking
+
+ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+
+User=root
+Group=root
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Установим httpd:
+```bash
+sudo yum -y install httpd
+```
+
+Настроим httpd для проксирования запросов на SonarQube:
+```bash
+sudo vi /etc/httpd/conf.d/sonar.yourdomain.com.conf
+```
+
+```xml
+<VirtualHost *:80>  
+    ServerName sonar.yourdomain.com
+    ServerAdmin me@yourdomain.com
+    ProxyPreserveHost On
+    ProxyPass / http://localhost:9000/
+    ProxyPassReverse / http://localhost:9000/
+    TransferLog /var/log/httpd/sonar.yourdomain.com_access.log
+    ErrorLog /var/log/httpd/sonar.yourdomain.com_error.log
+</VirtualHost>
+```
+
+Запустим httpd:
+```bash
+sudo systemctl start httpd
+sudo systemctl enable httpd
+```
+
+Отключим SELinux:
+```bash
+sudo setenforce 0
+```
+
+Запустим SonarQube:
+```bash
+sudo systemctl start sonar
+```
+
+
+Откроем в браузере Web интерфейс SonarQube (http://192.168.10.3/) и авторизуемся (admin/admin). Изучим его интерфейс. 
+
+Login: jenkins
+Name: jenkins
+Password: !QAZ2wsx
+
+Generate Tokens, jenkins, Generate, Copy
+77e19242a0ae764b311e3dbdb640ed2d0b1430ce
+
+SonarQube Scanner
+
+SonarQube servers, Add SonarQube
+
+Name: sonarqube
+Server URL: http://192.168.10.3
+
+Kind: Secret text
+Scope: Global
+Secret: 77e19242a0ae764b311e3dbdb640ed2d0b1430ce
+ID: sonarqube
+Description: sonarqube
+
