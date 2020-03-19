@@ -677,6 +677,11 @@ sudo rpm -Uvh https://download.postgresql.org/pub/repos/yum/9.6/redhat/rhel-7-x8
 sudo yum -y install postgresql96-server postgresql96-contrib
 ```
 
+Унициализируем базу данных Postgresql:
+```bash
+sudo /usr/pgsql-9.6/bin/postgresql96-setup initdb
+```
+
 Настроим Postgresql:
 ```bash
 sudo vi /var/lib/pgsql/9.6/data/pg_hba.conf
@@ -865,3 +870,61 @@ pipeline {
         }
 }
 ```
+
+Установим плагин Quality Gates
+
+В разделе конфигурация системы добавим инстанс Quality Gates (кнопка Add Sonar Instance):
+- Name: sonarqube
+- SonarQube Server URL: http://192.168.10.3
+- SonarQube account login: jenkins
+- SonarQube account password: 77e19242a0ae764b311e3dbdb640ed2d0b1430ce
+
+Создаём Webhooks в SonarQube со следующими параметрами:
+- Name: Jenkins
+- URL: http://192.168.10.2:8080/sonarqube-webhook/
+
+Корректируем код пайплайна:
+```bash
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_IMAGE_NAME = "bookapp"
+    }
+
+    stages {
+        stage("Checkout") {
+            steps {
+              git url: 'https://github.com/yjmyzz/springboot-blockchain-helloworld.git' 
+              }
+            }
+
+        stage("SonarQube Analysis") {
+            steps {
+                script {
+                    def scannerHome = tool 'sonarqube';
+                    withSonarQubeEnv('sonarqube') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=project -Dsonar.sources=."
+                    }
+                }
+            }
+        }
+        
+        stage("Quality Gate") {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+    }
+}
+```
+
+Запустим пайплайн. Изучим лог сборки.
+
+Изменим Quality Gate "SonarQube way" в SonarQube:
+- Security Rating: is worse than "A"
+
+Запустим пайплайн. Изучим лог сборки.
