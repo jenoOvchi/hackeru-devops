@@ -35,7 +35,7 @@ cd Ansible/
 
 Создаём директорию для данного задания:
 ```bash
-1-setup
+mkdir 1-setup
 cd 1-setup/
 ```
 
