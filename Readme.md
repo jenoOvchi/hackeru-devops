@@ -961,7 +961,7 @@ vi playbooks/add-new-host.yaml
           ansible_host=127.0.0.1
           ansible_port=2222
           ansible_user=vagrant
-          ansible_private_key_file="/Users/jeno/Documents/HackerU/DevOps/12/Ansible/1-setup/playbooks/.vagrant/machines/default/virtualbox/private_key"
+          ansible_private_key_file="/Users/jeno/Documents/HackerU/DevOps/12/Ansible/1-setup/playbooks/playbooks/.vagrant/machines/default/virtualbox/private_key"
 
 - name: Do something to the vagrant machine
   hosts: vagrant
@@ -1489,6 +1489,7 @@ remote_user = vagrant
 host_key_checking = False
 ```
 
+Даём доступы на  ключ (если ругается):
 ```bash
 cd /var/lib/jenkins/
 sudo chmod 600 /var/lib/jenkins/.ssh/id_rsa.pub
@@ -1499,6 +1500,7 @@ sudo chmod 600 /var/lib/jenkins/.ssh/id_rsa.pub
 sudo -u jenkins ansible all -m ping -i /var/lib/jenkins/inventory 
 ```
 
+Создадим плэйбук для проверки конфигурации SonarQube:
 ```bash
 sudo -u jenkins vi check-sonar.yaml
 ```
