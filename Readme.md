@@ -1076,7 +1076,7 @@ vagrant destroy -f
 ```
 
 #### Задание:
-Создать структуру директорий и файлов для инвентаря и файлов с переменными окружения и добавить в них данные для доступа к машинам с PostgreSQL и bookapp. 
+Создать структуру директорий и файлов для инвентаря и файлов с переменными окружения и добавить в них данные для доступа к машинам с PostgreSQL и bookapp.
 
 # Use Variables
 ---
@@ -1220,6 +1220,7 @@ vi playbooks/install-nginx-apt.yaml
 ```yaml
 - name: Install Nginx with apt packet manager
   hosts: server1
+  become: True
   tasks:
     - name: Install Nginx
       apt: name=nginx update_cache=yes
@@ -1230,12 +1231,12 @@ vi playbooks/install-nginx-apt.yaml
 
 Выполним созданный плэйбук первый раз и изучим вывод:
 ```bash
-ansible-playbook playbooks/debug-error.yaml
+ansible-playbook playbooks/install-nginx-apt.yaml
 ```
 
 Выполним созданный плэйбук второй раз и изучим вывод:
 ```bash
-ansible-playbook playbooks/debug-error.yaml
+ansible-playbook playbooks/install-nginx-apt.yaml
 ```
 
 ## Use Facts
@@ -1311,6 +1312,7 @@ vi playbooks/print-local-facts.yaml
 ```yaml
 - name: Print local facts
   hosts: all
+  become: True
   tasks:
     - name: Print ansible_local
       debug: var=ansible_local
