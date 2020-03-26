@@ -4,7 +4,7 @@
 
 Настраиваем подключение к кластеру Kubernetes:
 ```bash
-minikube start
+minikube start --vm-driver=virtualbox
 ```
 
 Проверим статус компонентов управляющей плоскости Kubernetes
@@ -571,6 +571,9 @@ kubectl describe nodes
 ```bash
 kubectl describe pods
 ```
+
+#### Задание:
+Развернуть приложение bookapp в новом кластере Kubernetes.
 
 ## Topic 3: Managing the Kubernetes Cluster
 
@@ -1215,6 +1218,9 @@ kubectl delete deployments kubeserve2 nginx
 kubectl delete svc nginx-loadbalancer kubeserve2 kube-headless nginx nginx-nodeport
 kubectl delete po busybox dns-example
 ```
+
+#### Задание:
+Создать ingress для приложения bookapp.
 
 ## Topic 5: Pod Scheduling within the Kubernetes Cluster
 
