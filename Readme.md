@@ -395,7 +395,7 @@ sudo sysctl -p
 
 Устанавливаем компоненты управляющей плоскости Kubernetes с помощью kubeadm:
 ```bash
-sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=192.168.10.2
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=192.168.10.2 --ignore-preflight-errors=all
 ```
 
 Настраиваем kubeconfig для текущего пользователя:
@@ -430,14 +430,14 @@ vi join
 ```
 
 ```bash
-sudo kubeadm join [your unique string from the kubeadm init command]
+sudo kubeadm join [your unique string from the kubeadm init command] --ignore-preflight-errors=all
 ```
 
 ### Следующая команда выполняется на виртуальных машинах worker1 и worker2
 
 Добавляем узлы worker1 и worker2 в кластер Kubernetes:
 ```bash
-sudo kubeadm join [your unique string from the kubeadm init command]
+sudo kubeadm join [your unique string from the kubeadm init command] --ignore-preflight-errors=all
 ```
 
 ### Следующие команды выполняются на виртуальной машине master
@@ -1862,6 +1862,9 @@ kubectl get events -w
 kubectl logs kube-scheduler-master -n kube-system
 ```
 
+#### Задание:
+Для приложения bookapp задать лимиты и реквесты.
+
 ## Topic 6: Deploying Applications in the Kubernetes Cluster
 
 Создадим описание конфигурации развёртывания тестового модуля:
@@ -2379,6 +2382,9 @@ kubectl get statefulsets
 ```bash
 kubectl describe statefulsets
 ```
+
+#### Задание:
+Создать секрет со строкой подключения к БД и передать его в виде переменной окружения в приложение bookapp.
 
 ## Topic 7: Managing Data in the Kubernetes Cluster
 
@@ -3010,6 +3016,9 @@ kubectl delete pvc --all
 kubectl delete pv --all
 ```
 
+#### Задание:
+Развернуть PodtgreSQL в виде StatefulSet с томом в директории, в которой хранятся данные БД. Сохранить книгу в БД, удалить под PodtgreSQL и проверить, что после запуска нового пода данные вновь доступны.
+
 ## Topic 8: Securing the Kubernetes Cluster
 
 Изучим имеющиеся сервисные аккаунты пространства имён "default":
@@ -3246,6 +3255,9 @@ curl localhost:8001/api/v1/persistentvolumes
 ```bash
 kubectl delete ns web
 ```
+
+#### Задание:
+Создать отдельные Service Account для PodtgreSQL и bookapp и добавить в их Deployment и StatefulSet использование данных аккаунтов вместо аккаунтов по умолчанию.
 
 Скачиваем yaml описание сетевого плагина "Canal", позволяющего настраивать сетевые политики:
 ```bash
@@ -3580,6 +3592,9 @@ kubectl delete -f egress-dns.yaml
 kubectl delete deployments postgres
 kubectl delete svc postgres
 ```
+
+#### Задание:
+Создать отдельные сетевые политики (Ingress и Egress) для PodtgreSQL и bookapp, разрешающие для всех доступ к внутреннему DNS, разрешающие внешний доступ к bookapp откуда угодно, разрешающие  доступ из bookapp в PodtgreSQL и запрещающие всё остальное.
 
 Вновь создадим тестовый модуль для демонстрации файлов, монтируемых из секрета сервисного аккаутнта:
 ```bash
@@ -4644,6 +4659,9 @@ kubectl delete po group-context liveness nginx nginxpd pod-with-defaults
 kubectl delete svc nginx
 ```
 
+#### Задание:
+Добавим Liveness Probe в манифесты Deployment bookapp и StatefulSet PostgreSQL.
+
 Изучим директорию, в которой Kubelet хранит логи контейнеров:
 ```bash
 ls /var/log/containers
@@ -5460,3 +5478,476 @@ kubectl explain deployments
 ```bash
 kubectl config use-context
 ```
+
+## Topic 10: Monitoring with Prometheus
+
+```bash
+mkdir prometheus
+cd prometheus
+```
+
+Создаем описание серверов кластера:
+```bash
+vi Vagrantfile
+```
+
+```ruby
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.ssh.insert_key = false
+
+  config.vm.define "master" do |master|
+    master.vm.box = "ubuntu/xenial64"
+    master.vm.network "forwarded_port", guest: 80, host: 8080
+    master.vm.network "forwarded_port", guest: 443, host: 8443
+    master.vm.network "private_network", ip: "192.168.10.2"
+    master.vm.hostname = "master"
+    master.vm.provider "virtualbox" do |v|
+      v.memory = 2048
+      v.cpus = 2
+    end
+  end
+end
+```
+
+Запускаем сервера кластера:
+```bash
+vagrant up
+```
+
+Проверяем подключение к серверам с помощью vagrant:
+```bash
+vagrant ssh master
+```
+
+Скачиваем Prometheus:
+```bash
+wget https://github.com/prometheus/prometheus/releases/download/v2.17.1/prometheus-2.17.1.linux-amd64.tar.gz
+```
+
+Разархивируем Prometheus:
+```bash
+tar xvfz prometheus-*.tar.gz
+cd prometheus-*
+```
+
+Сохраним базовую конфигурацию Prometheus в отдельный файл:
+```bash
+cp prometheus.yml prometheus-backup.yml
+```
+
+Сконфигурируем Prometheus для отслеживания своего состояния:
+```bash
+echo "" > prometheus.yml
+vi prometheus.yml
+```
+
+```yaml
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'monitor'
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'prometheus'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+Запустим сервер Prometheus с настройками из созданного нами файла конфигураций:
+```bash
+./prometheus --config.file=prometheus.yml
+```
+
+Откроем в браузере URL сервера Prometheus, на котором он предоставляет свои метрики (http://192.168.10.2:9090/metrics). Изучим метрики, предоставляемые сервером Prometheus.
+
+Откроем в браузере URL сервера Prometheus, на котором он предоставляет графический интерфейс (http://192.168.10.2:9090/graph). Изучим элементы интерфейса Prometheus.
+В поле "Expression" введём "prometheus_target_interval_length_seconds" и нажмём кнопку "Execute". Изучим список выведенных метрик.
+В поле "Expression" введём "prometheus_target_interval_length_seconds{quantile="0.99"}" (с заданной меткой) и нажмём кнопку "Execute". Изучим вывод.
+В поле "Expression" введём "count(prometheus_target_interval_length_seconds)" (посчитаем количество метрик такого типа) и нажмём кнопку "Execute". Изучим вывод.
+
+Нажмём кнопку "Graph". В поле "Expression" введём "rate(prometheus_tsdb_head_chunks_created_total[1m])" (отобразим среднюю скорость увеличения выбранной метрики) и нажмём кнопку "Execute". Изучим сформированный график.
+
+Установим Go для запуска нескольких простых целей мониторинга:
+```bash
+cd /tmp
+wget https://dl.google.com/go/go1.12.linux-amd64.tar.gz
+sudo tar -xvf go1.12.linux-amd64.tar.gz
+sudo mv go /usr/local
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/go
+export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+go version
+```
+
+Запустим несколько приложений для демонстрации настройки мониторинга:
+```bash
+cd ~/prometheus-2.17.1.linux-amd64/
+git clone https://github.com/prometheus/client_golang.git
+cd client_golang/examples/random
+go get -d
+go build
+./random -listen-address=:8080 &
+./random -listen-address=:8081 &
+./random -listen-address=:8082 &
+```
+
+Откроем браузер и проверим, что метрики запущенных приложений доступны по HTTP (http://192.168.10.2:8080/metrics, http://192.168.10.2:8081/metrics, and http://192.168.10.2:8082/metrics).
+
+Сконфигурируем Prometheus для сбора метрик с запущенных тестовых приложений:
+```bash
+cd ~/prometheus-2.17.1.linux-amd64/
+echo "" > prometheus.yml
+vi prometheus.yml
+```
+
+```yaml
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'monitor'
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'prometheus'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name:       'example-random'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['localhost:8080', 'localhost:8081']
+        labels:
+          group: 'production'
+
+      - targets: ['localhost:8082']
+        labels:
+          group: 'canary'
+```
+
+Запустим сервер Prometheus с настройками из обновлённого файла конфигураций:
+```bash
+./prometheus --config.file=prometheus.yml
+```
+
+Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "rpc_durations_seconds" и нажмём кнопку "Execute". Изучим список выведенных метрик (обратим внимание на теги "canary" и "production").
+
+В поле "Expression" введём "avg(rate(rpc_durations_seconds_count[5m])) by (job, service)" и нажмём кнопку "Execute". Изучим список выведенных метрик.
+Нажмём кнопку "Graph" и изучим графики рассчитанных значений метрик.
+
+Создадим файл с дополнительным правилом сбора метрик в Prometheus:
+```bash
+vi prometheus.rules.yml
+```
+
+```yaml
+groups:
+- name: example
+  rules:
+  - record: job_service:rpc_durations_seconds_count:avg_rate5m
+    expr: avg(rate(rpc_durations_seconds_count[5m])) by (job, service)
+```
+
+Сконфигурируем Prometheus для сбора метрик с помощью созданного файла с правилом:
+```bash
+echo "" > prometheus.yml
+vi prometheus.yml
+```
+
+```yaml
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds.
+
+  # Attach these extra labels to all timeseries collected by this Prometheus instance.
+  external_labels:
+    monitor: 'monitor'
+
+rule_files:
+  - 'prometheus.rules.yml'
+
+scrape_configs:
+  - job_name: 'prometheus'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name:       'example-random'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['localhost:8080', 'localhost:8081']
+        labels:
+          group: 'production'
+
+      - targets: ['localhost:8082']
+        labels:
+          group: 'canary'
+```
+
+Запустим сервер Prometheus с настройками из обновлённого файла конфигураций:
+```bash
+./prometheus --config.file=prometheus.yml
+```
+
+Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "job_service:rpc_durations_seconds_count:avg_rate5m" и нажмём кнопку "Execute". Изучим список выведенных метрик (обратим внимание на теги "canary" и "production").
+Нажмём кнопку "Graph" и изучим графики рассчитанных значений метрики.
+
+Остановим запущенные процессы для генерации метрик
+```bash
+ps -aux | grep random | grep -v grep | awk '{print $2}' | xargs kill -9
+```
+
+Установим PostgreSQL на виртуальную машину:
+```bash
+sudo apt-get install wget ca-certificates
+wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" >> /etc/apt/sources.list.d/pgdg.list'
+sudo apt-get update
+sudo apt-get install -y postgresql postgresql-contrib
+```
+
+Настроим использование PostgreSQL из под пользователя "vagrant":
+```bash
+sudo su - postgres
+psql
+postgres-# CREATE ROLE vagrant WITH LOGIN CREATEDB ENCRYPTED PASSWORD 'vagrant';
+postgres-# \q
+su - vagrant
+createdb vagrant
+psql
+vagrant-# \list
+vagrant-# \q
+```
+
+Установим и запустим Prometheus PostgreSQL Exporter:
+```bash
+go get github.com/wrouesnel/postgres_exporter
+cd ${GOPATH-$HOME/go}/src/github.com/wrouesnel/postgres_exporter
+go run mage.go binary
+export DATA_SOURCE_NAME="postgresql://vagrant:vagrant@localhost:5432/vagrant"
+./postgres_exporter
+./postgres_exporter &
+```
+
+Откроем URL Prometheus PostgreSQL Exporter (http://192.168.10.2:9187/metrics) в браузере и проверим, что метрики БД доступны по HTTP.
+
+Сконфигурируем Prometheus для сбора метрик с Prometheus PostgreSQL Exporter:
+```bash
+cd ~/prometheus-2.17.1.linux-amd64/
+echo "" > prometheus.yml
+vi prometheus.yml
+```
+
+```yaml
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'monitor'
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'PostgreSQL'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['192.168.10.2:9187']
+```
+
+Запустим сервер Prometheus с настройками из созданного нами файла конфигураций:
+```bash
+./prometheus --config.file=prometheus.yml
+```
+
+Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "pg_up" и нажмём кнопку "Execute". Изучим список выведенных метрик.
+Нажмём кнопку "Graph" и изучим график доступности БД.
+
+```bash
+sudo adduser --no-create-home --disabled-login --shell /bin/false --gecos "Alertmanager User" alertmanager
+sudo mkdir /etc/alertmanager
+sudo mkdir /etc/alertmanager/template
+sudo mkdir -p /var/lib/alertmanager/data
+sudo touch /etc/alertmanager/alertmanager.yml
+sudo chown -R alertmanager:alertmanager /etc/alertmanager
+sudo chown -R alertmanager:alertmanager /var/lib/alertmanager
+wget https://github.com/prometheus/alertmanager/releases/download/v0.20.0/alertmanager-0.20.0.linux-amd64.tar.gz
+tar xvzf alertmanager-0.20.0.linux-amd64.tar.gz
+sudo cp alertmanager-0.20.0.linux-amd64/alertmanager /usr/local/bin/
+sudo cp alertmanager-0.20.0.linux-amd64/amtool /usr/local/bin/
+sudo chown alertmanager:alertmanager /usr/local/bin/alertmanager
+sudo chown alertmanager:alertmanager /usr/local/bin/amtool
+sudo vi /etc/alertmanager/alertmanager.yml
+```
+
+```yaml
+global:
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alertmanager@example.org'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: 'password'
+
+templates:
+- '/etc/alertmanager/template/*.tmpl'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 1m
+  repeat_interval: 3h
+  receiver: team-X-mails
+  routes:
+  - match:
+      job: "PostgreSQL"
+    receiver: team-X-mails
+
+receivers:
+- name: 'team-X-mails'
+  email_configs:
+  - to: 'team-X+alerts@example.org'
+
+inhibit_rules:
+- source_match:
+    severity: 'page'
+  target_match:
+    severity: 'warning'
+  # Apply inhibition if the alertname is the same.
+  # CAUTION: 
+  #   If all label names listed in `equal` are missing 
+  #   from both the source and target alerts,
+  #   the inhibition rule will apply!
+  equal: ['alertname', 'cluster', 'service']
+```
+
+
+```bash
+sudo vi /etc/systemd/system/alertmanager.service
+```
+
+```ini
+[Unit]
+Description=Prometheus Alertmanager Service
+Wants=network-online.target
+After=network.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+ExecStart=/usr/local/bin/alertmanager \
+    --config.file /etc/alertmanager/alertmanager.yml \
+    --storage.path /var/lib/alertmanager/data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable alertmanager
+sudo systemctl start alertmanager
+rm alertmanager-0.20.0.linux-amd64.tar.gz
+rm -rf alertmanager-0.20.0.linux-amd64
+```
+
+http://192.168.10.2:9093/#/alerts
+
+Сконфигурируем Prometheus для использования развёрнутого Alert Manager:
+```bash
+echo "" > prometheus.yml
+vi prometheus.yml
+```
+
+```yaml
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'monitor'
+
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - localhost:9093
+
+rule_files:
+  - 'prometheus.rules.yml'
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'PostgreSQL'
+
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+
+    static_configs:
+      - targets: ['192.168.10.2:9187']
+```
+
+```bash
+echo "" > prometheus.rules.yml
+vi prometheus.rules.yml
+```
+
+
+```yaml
+groups:
+- name: postgresql-down
+  rules:
+
+  - alert: more-numbackends
+    expr: pg_stat_database_numbackends > 1
+    for: 15s
+    labels:
+      severity: page
+    annotations:
+      summary: "On instance {{ $labels.instance }} numbackends more than 1"
+      description: "On {{ $labels.instance }} instance of {{ $labels.job }} numbackends has been more than 1"
+```
+
+
+nohup ./prometheus --config.file=prometheus.yml > prometheus.out 2>&1 &
+
+pgbench -T 120 vagrant
