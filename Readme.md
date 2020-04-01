@@ -2150,7 +2150,7 @@ kubectl exec configmap-volume-pod -- ls /etc/config
 
 Изучим один из файлов тестового модуля, смонтированный из словаря конфигурации:
 ```bash
-kubectl exec configmap-volume-pod -- ls /etc/config
+kubectl exec configmap-volume-pod -- cat /etc/config/key1
 ```
 
 Создадим описание секрета с двумя объектами типа "stringData":
@@ -4493,7 +4493,7 @@ curl https://localhost:8443 -k
 kubectl delete pods example-https
 ```
 
-## Topic 9: Monitoring Cluster Components
+## Topic 9: Monitoring with Prometheus
 
 Клонируем репозиторий с описанием конфигурации развёртывания сервера метрик:
 ```bash
@@ -4661,825 +4661,6 @@ kubectl delete svc nginx
 
 #### Задание:
 Добавим Liveness Probe в манифесты Deployment bookapp и StatefulSet PostgreSQL.
-
-Изучим директорию, в которой Kubelet хранит логи контейнеров:
-```bash
-ls /var/log/containers
-```
-
-Изучим директорию, в которой Kubelet хранит логи контейнеров:
-```bash
-ls /var/log
-```
-
-Создадим описание тестового модуля, пишущего логи параллельно в два файла:
-```bash
-vi twolog.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: counter
-spec:
-  containers:
-  - name: count
-    image: busybox
-    args:
-    - /bin/sh
-    - -c
-    - >
-      i=0;
-      while true;
-      do
-        echo "$i: $(date)" >> /var/log/1.log;
-        echo "$(date) INFO $i" >> /var/log/2.log;
-        i=$((i+1));
-        sleep 1;
-      done
-    volumeMounts:
-    - name: varlog
-      mountPath: /var/log
-  volumes:
-  - name: varlog
-    emptyDir: {}
-```
-
-Создадим тестовый модуль, пишущий логи параллельно в два файла:
-```bash
-kubectl apply -f twolog.yaml
-```
-
-Изучим папку с файлами логов, созданных в тестовом модуле:
-```bash
-kubectl exec counter -- ls /var/log
-```
-
-Создадим описание тестового модуля, пишущего логи параллельно в два файла и имеющего два sidecar контейнера, читающих логи в стандартный поток вывода:
-```bash
-vi counter-with-sidecars.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: counter
-spec:
-  containers:
-  - name: count
-    image: busybox
-    args:
-    - /bin/sh
-    - -c
-    - >
-      i=0;
-      while true;
-      do
-        echo "$i: $(date)" >> /var/log/1.log;
-        echo "$(date) INFO $i" >> /var/log/2.log;
-        i=$((i+1));
-        sleep 1;
-      done
-    volumeMounts:
-    - name: varlog
-      mountPath: /var/log
-  - name: count-log-1
-    image: busybox
-    args: [/bin/sh, -c, 'tail -n+1 -f /var/log/1.log']
-    volumeMounts:
-    - name: varlog
-      mountPath: /var/log
-  - name: count-log-2
-    image: busybox
-    args: [/bin/sh, -c, 'tail -n+1 -f /var/log/2.log']
-    volumeMounts:
-    - name: varlog
-      mountPath: /var/log
-  volumes:
-  - name: varlog
-    emptyDir: {}
-```
-
-Создадим тестовый модуль, пишущий логи параллельно в два файла и имеющий два sidecar контейнера, читающих логи в стандартный поток вывода:
-```bash
-kubectl apply -f counter-with-sidecars.yaml
-```
-
-Изучим логи первого sidecar контейнера:
-```bash
-kubectl logs counter count-log-1
-```
-
-Изучим логи второго sidecar контейнера:
-```bash
-kubectl logs counter count-log-2
-```
-
-Создадим описание конфигурации развёртывания тестового модуля:
-```bash
-vi nginx.yaml
-```
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-deployment
-spec:
-  selector:
-    matchLabels:
-      app: nginx
-  replicas: 2
-  template:
-    metadata:
-      labels:
-        app: nginx
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.7.9
-        ports:
-        - containerPort: 80
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 5
-          periodSeconds: 5
-```
-
-Создадим развёртывание тестового модуля из этого описания:
-```bash
-kubectl apply -f nginx.yaml
-```
-
-Изучим логи созданного тестового модуля:
-```bash
-kubectl logs $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
-```
-
-Изучим логи одного из контейнеров ранее созданного тестового модуля:
-```bash
-kubectl logs counter -c count-log-1
-```
-
-Изучим логи всех контейнеров ранее созданного тестового модуля:
-```bash
-kubectl logs counter --all-containers=true
-```
-
-Изучим логи всех модулей с определённой меткой:
-```bash
-kubectl logs -l app=nginx
-```
-
-Изучим логи ранее завершённого контейнера созданного тестового модуля (если такой есть):
-```bash
-kubectl logs -p -c nginx $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
-```
-
-Изучим логи одного из контейнеров ранее созданного тестового модуля, активировав режим слежения:
-```bash
-kubectl logs -f -c count-log-1 counter
-```
-
-Выведем определённое количество логов созданного тестового модуля:
-```bash
-kubectl logs --tail=20 $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
-```
-
-Выведем логи созданного тестового модуля за определённый период:
-```bash
-kubectl logs --since=1h $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
-```
-
-Выведем логи контейнеров с определённым именем заданной конфигурации развёртывания:
-```bash
-kubectl logs deployment/nginx-deployment -c nginx
-```
-
-Сохраним логи одного из контейнеров ранее созданного тестового модуля в файл:
-```bash
-kubectl logs counter -c count-log-1 > count.log
-```
-
-Удалим созданные ресурсы Kubernetes:
-```bash
-kubectl delete deployment nginx-deployment
-kubectl delete po counter
-```
-
-## Topic 10: Identifying Failure within the Kubernetes Cluster
-
-Создадим описание тестового модуля:
-```bash
-vi pod2-new.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: pod2
-spec:
-  containers:
-  - image: busybox
-    name: main
-    command:
-    - sh
-    - -c
-    - 'echo "I''ve had enough" > /var/termination-reason ; exit 1'
-    terminationMessagePath: /var/termination-reason
-```
-
-Создадим развёртывание тестового модуля из этого описания:
-```bash
-kubectl apply -f pod2-new.yaml
-```
-
-Изучим статус развёртывания тестового модуля:
-```bash
-kubectl get po
-```
-
-Изучим описание тестового модуля и связанные с ним события:
-```bash
-kubectl describe po pod2 | grep Message:
-```
-
-Создадим описание тестового модуля с "проверкой живости" на отдельном порту:
-```bash
-vi liveness-new.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: liveness
-spec:
-  containers:
-  - image: linuxacademycontent/candy-service:2
-    name: kubeserve
-    livenessProbe:
-      httpGet:
-        path: /healthz
-        port: 8081
-```
-
-Создадим тестовый модуль с "проверкой живости" на отдельном порту:
-```bash
-kubectl apply -f liveness-new.yaml
-```
-
-Изучим статус развёртывания тестового модуля:
-```bash
-kubectl get po
-```
-
-Изучим логи созданного тестового модуля:
-```bash
-kubectl logs liveness
-```
-
-Создадим тестовый модуль с коротким временем жизни:
-```bash
-kubectl run pod-with-defaults --image alpine --restart Never -- /bin/sleep 60
-```
-
-Проверим, что тестовый модуль успешно создан:
-```bash
-kubectl get pods pod-with-defaults
-```
-
-Ждём минуту до завершения работы корневого процесса созданного тестового модуля.
-
-Проверим, что тестовый модуль завершил работу:
-```bash
-kubectl get pods pod-with-defaults
-```
-
-Изучим логи тестового модуля, завершившего работу:
-```bash
-kubectl logs pod-with-defaults
-```
-
-Экспортируем описание тестового модуля, завершившего работу, в текстовый файл:
-```bash
-kubectl get po pod-with-defaults -o yaml --export > defaults-pod.yaml
-```
-
-Удалим тестовый модуль, завершивший работу:
-```bash
-kubectl delete pods pod-with-defaults
-```
-
-Воссоздадим тестовый модуль из экспортированного файла:
-```bash
-kubectl apply -f defaults-pod.yaml
-```
-
-Проверим, что воссозданный тестовый модуль вновь работает:
-```bash
-kubectl get pods pod-with-defaults
-```
-
-Создадим описание тестового модуля с некорректным указанием образа:
-```bash
-vi nginx-eip.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: nginxpd
-  labels:
-    app: nginx
-spec:
-  containers:
-  - name: nginx
-    image: nginx:191
-    readinessProbe:
-      httpGet:
-        path: /
-        port: 80
-      initialDelaySeconds: 5
-      periodSeconds: 5
-```
-
-Создадим тестовый модуль с некорректным указанием образа:
-```bash
-kubectl apply -f nginx-eip.yaml
-```
-
-Проверим, что при запуске тестового модуля возникла ошибка:
-```bash
-kubectl get pods
-```
-
-Исправим ошибку в описании тестового модуля, при запуске которого возникла ошибка:
-```bash
-kubectl patch pod nginxpd -p '{"spec": {"containers": [{"name": "nginx", "image": "nginx:1.14-alpine-perl"}]}}'
-```
-
-Изучим созданные тестовые модули и проверим, что тестовый модуль запущен успешно:
-```bash
-kubectl get pods
-```
-
-Создадим описание тестового модуля с указанием чрезмерно большого запроса ресурсов:
-```bash
-vi resource-pod3.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: resource-pod3
-spec:
-  containers:
-  - image: busybox
-    command: ["dd", "if=/dev/zero", "of=/dev/null"]
-    name: pod1
-    resources:
-      requests:
-        cpu: 200m
-        memory: 9999Mi
-```
-
-Создадим тестовый модуль с указанием чрезмерно большого запроса ресурсов:
-```bash
-kubectl create -f resource-pod3.yaml
-```
-
-Проверим, что при запуске тестового модуля возникла ошибка:
-```bash
-kubectl get pods
-```
-
-Попробуем исправить чрезмерно большой запрос ресурсов в описании тестового модуля, при запуске которого возникла ошибка:
-```bash
-kubectl patch pod resource-pod3 -p '{"spec": {"containers": [{"name": "pod1", "resources": {"requests": {"memory": "99Mi"}}}]}}'
-```
-
-Экспортируем описание тестового модуля, который требуется исправить, в текстовый файл:
-```bash
-kubectl get po resource-pod3 -o yaml --export > resource-pod3-export.yaml
-```
-
-Удалим тестовый модуль, который требуется исправить:
-```bash
-kubectl delete pods resource-pod3
-```
-
-Исправляем описание тестового модуля:
-```bash
-sed -i "s/9999Mi/99Mi/" resource-pod3-export.yaml
-```
-
-Воссоздадим тестовый модуль из экспортированного файла:
-```bash
-kubectl apply -f resource-pod3-export.yaml
-```
-
-Проверим, что воссозданный тестовый модуль успешно запущен:
-```bash
-kubectl get pods
-```
-
-Удалим созданные ресурсы Kubernetes:
-```bash
-kubectl delete pods resource-pod3 nginxpd pod-with-defaults liveness pod2
-```
-
-Изучим события в пространстве имён плоскости управления Kubernetes:
-```bash
-kubectl get events -n kube-system
-```
-
-Изучим логи планировщика Kubernetes:
-```bash
-kubectl logs kube-scheduler-master -n kube-system
-```
-
-Изучим статус сервиса Docker:
-```bash
-sudo systemctl status docker
-```
-
-Сделаем сервис Docker доступным после перезапуска узла и запустим его:
-```bash
-sudo systemctl enable docker && sudo systemctl start docker
-```
-
-Изучим статус сервиса Kubelet:
-```bash
-sudo systemctl status kubelet
-```
-
-Сделаем сервис Kubelet доступным после перезапуска узла и запустим его:
-```bash
-sudo systemctl enable kubelet && sudo systemctl start kubelet
-```
-
-Отключим swap:
-```bash
-sudo swapoff -a && sudo sed -i '/ swap / s/^/#/' /etc/fstab
-```
-
-Изучим статус сервиса FirewallD:
-```bash
-sudo systemctl status firewalld
-```
-
-Сделаем сервис FirewallD недоступным после перезапуска узла и отключим его:
-```bash
-sudo systemctl disable firewalld && sudo systemctl stop firewalld
-```
-
-Создадим описание конфигурации развёртывания двух реплик тестового модуля, размещаемых на узле "worker2":
-```bash
-vi kubeserve-deployment-worker2.yaml
-```
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kubeserve-worker2
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: kubeserve
-  template:
-    metadata:
-      name: kubeserve
-      labels:
-        app: kubeserve
-    spec:
-      nodeSelector:
-        kubernetes.io/hostname: "worker2"
-      containers:
-      - image: linuxacademycontent/candy-service:2
-        name: kubeserve
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
-```
-
-Создадим конфигурацию развёртывания двух реплик тестового модуля, размещаемых на узле "worker2":
-```bash
-kubectl apply -f kubeserve-deployment-worker2.yaml
-```
-
-Проверим, что две реплики тестового модуля успешно запущены на узле "worker2":
-```bash
-kubectl get pods -o wide
-```
-
-### Следующая команда выполняется на основной рабочей машине
-
-Удаляем узел "worker2":
-```bash
-vagrant destroy worker2
-```
-
-Изучим статус узлов кластера Kubernetes:
-```bash
-kubectl get nodes
-```
-
-Изучим статус узлов кластера Kubernetes:
-```bash
-kubectl get pods
-```
-
-Изучим описание узла "worker2", статус которого изменился:
-```bash
-kubectl describe nodes worker2
-```
-
-Попробуем подключиться к узлу со сбоем по SSH по имени хоста:
-```bash
-ssh vagrant@worker2
-```
-
-Попробуем подключиться к узлу со сбоем по SSH по имени хоста:
-```bash
-ssh vagrant@192.168.10.4
-```
-
-Попробуем сделать ping узла со сбоем:
-```bash
-ping 192.168.10.4
-```
-
-### Следующая команда выполняется на основной рабочей машине
-
-Заново создаём узел "worker2":
-```bash
-vagrant up worker2
-```
-
-### Следующие команды выполняются на вновь созданном узле worker2
-
-Добавляем ключ gpg для установки Docker:
-```bash
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-```
-
-Добавляем репозиторий для установки Docker:
-```bash
-sudo add-apt-repository    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-   $(lsb_release -cs) \
-   stable"
-```
-
-Добавляем ключ gpg для установки Kubernetes:
-```bash
-curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-```
-
-Добавляем репозиторий для установки Kubernetes:
-```bash
-cat << EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
-deb https://apt.kubernetes.io/ kubernetes-xenial main
-EOF
-```
-
-Обновляем пакеты:
-```bash
-sudo apt-get update
-```
-
-Устанавливаем Docker и компоненты Kubernetes:
-```bash
-sudo apt-get install -y docker-ce=18.06.1~ce~3-0~ubuntu kubelet=1.13.5-00 kubeadm=1.13.5-00 kubectl=1.13.5-00
-```
-
-Отключаем обновление Docker и компонентов Kubernetes:
-```bash
-sudo apt-mark hold docker-ce kubelet kubeadm kubectl
-```
-
-Сделаем сервис Docker доступным после перезапуска узла и запустим его:
-```bash
-sudo systemctl enable docker && sudo systemctl start docker
-```
-
-Сделаем сервис Kubelet доступным после перезапуска узла и запустим его:
-```bash
-sudo systemctl enable kubelet && sudo systemctl start kubelet
-```
-
-Добавляем правило для корректной работы iptables:
-```bash
-echo "net.bridge.bridge-nf-call-iptables=1" | sudo tee -a /etc/sysctl.conf
-```
-
-Активируем iptables:
-```bash
-sudo sysctl -p
-```
-
-### Следующая команда выполняется на узле master
-
-Создаём команду для добавления узла в кластер и сохраняем её в файл "join":
-```bash
-sudo kubeadm token create $(sudo kubeadm token generate) --ttl 2h --print-join-command > join
-cat join
-```
-
-### Следующая команда выполняется на узле worker2
-
-Выполняем созданную команду для добавления узла в кластер на узле "worker2":
-```bash
-sudo kubeadm join 192.168.10.2:6443 --token <token>     --discovery-token-ca-cert-hash sha256:<discovery-token-ca-cert-hash>
-```
-
-### Следующие команды выполняются на узле master
-
-Проверим, что новый узел успешно добавлен в кластер и готов к эксплуатации:
-```bash
-kubectl get nodes
-```
-
-Проверим, что работоспособность тестового модуля восстановлена:
-```bash
-kubectl get pods
-```
-
-### Следующая команда выполняется на узле worker2
-
-Остановим сервис "kubelet":
-```bash
-sudo service kubelet stop
-```
-
-Проверим, что узел "worker2" перешёл в статус "NotReady":
-```bash
-kubectl get nodes
-```
-
-Изучим узел "worker2" на наличие событий, относящихся к причине его статуса:
-```bash
-kubectl describe nodes worker2
-```
-
-### Следующие команды выполняются на узле worker2
-
-Изучим журналы сервиса "kubelet" с помощью "journalctl":
-```bash
-sudo journalctl -u kubelet
-```
-
-Изучим системные логи и найдём записи, относящиеся к сервису "kubelet":
-```bash
-sudo more /var/log/syslog | tail -120 | grep kubelet
-```
-
-Изучим статус сервиса "kubelet":
-```bash
-sudo service kubelet status
-```
-
-Запустим сервис "kubelet":
-```bash
-sudo service kubelet start
-```
-
-Ещё раз проверим статус сервиса "kubelet":
-```bash
-sudo service kubelet status
-```
-
-### Следующие команды выполняются на узле master
-
-Проверим, что статус узла "worker2" перешёл обратно в "Ready":
-```bash
-kubectl get nodes
-```
-
-Удалим конфигурацию развёртывания тестового модуля:
-```bash
-kubectl delete deployments kubeserve-worker2
-```
-
-Создадим тестовый модуль для тестирования работы сети:
-```bash
-kubectl run hostnames --image=k8s.gcr.io/serve_hostname \
-                        --labels=app=hostnames \
-                        --port=9376 \
-                        --replicas=3
-```
-
-Изучим сервисы, созданные в проекте "default":
-```bash
-kubectl get svc
-```
-
-Создадим сервис для тестового модуля:
-```bash
-kubectl expose deployment hostnames --port=80 --target-port=9376
-```
-
-Создадим ещё один тестовый модуль для тестирования работы DNS:
-```bash
-kubectl run -it --rm --restart=Never busybox --image=busybox:1.28 sh
-```
-
-Найдём DNS запись, относящуются к сервису первого тестового модуля:
-```bash
-nslookup hostnames
-```
-
-Изучим конфигурацию разрешения доменных имён тестового модуля:
-```bash
-cat /etc/resolv.conf
-```
-
-Найдём DNS запись, относящуются к сервису API Kubetnetes:
-```bash
-nslookup kubernetes.default
-```
-
-Изучим сервис созданного тестового модуля:
-```bash
-kubectl get svc hostnames -o json
-```
-
-Изучим конечные точки сервиса созданного тестового модуля:
-```bash
-kubectl get ep
-```
-
-Проверим доступность одной из конечных точек тестового модуля с узла "master":
-```bash
-wget -qO- $(kubectl get ep | grep hostnames | awk '{print $2}' | sed 's/,.*//')
-```
-
-Проверим, запущен ли на узлах сервис "kube-proxy":
-```bash
-ps auxw | grep kube-proxy
-```
-
-Проверим, изменяет ли сервис "kube-proxy" правила "iptables" на узлах:
-```bash
-sudo iptables-save | grep hostnames
-```
-
-Изучим модули проекта "kube-system":
-```bash
-kubectl get pods -n kube-system
-```
-
-Проверим, изменяет ли конкретный экземпляр сервиса "kube-proxy" правила "iptables" на узлах:
-```bash
-kubectl exec -it $(kubectl get po -n kube-system | grep kube-proxy | head -1 | awk '{print $1}') -n kube-system -- sh
-iptables-save | grep hostnames
-```
-
-Удалим установленные сетевые плагины:
-```bash
-kubectl delete -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
-kubectl delete -f https://docs.projectcalico.org/v3.5/getting-started/kubernetes/installation/hosted/canal/canal.yaml
-```
-
-Установим сетевой плагин weave-net:
-```bash
-kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
-```
-
-## P.S.: Tips
-
-Настроим правила автоматического дополнения:
-```bash
-source <(kubectl completion bash)
-echo "source <(kubectl completion bash)" >> ~/.bashrc
-```
-
-Выведем информацию об использовании kubectl:
-```bash
-kubectl help
-```
-
-Отобразим документацию с описанием одного извидов ресурсов Kubernetes:
-```bash
-kubectl explain deployments
-```
-
-Переключимся между контекстами kubectl (пользователями или кластерами Kubernetes):
-```bash
-kubectl config use-context
-```
-
-## Topic 10: Monitoring with Prometheus
 
 ```bash
 mkdir prometheus
@@ -5951,3 +5132,217 @@ groups:
 nohup ./prometheus --config.file=prometheus.yml > prometheus.out 2>&1 &
 
 pgbench -T 120 vagrant
+
+
+
+
+## Topic 11: Logging with ELK Stack
+
+Изучим директорию, в которой Kubelet хранит логи контейнеров:
+```bash
+ls /var/log/containers
+```
+
+Изучим директорию, в которой Kubelet хранит логи контейнеров:
+```bash
+ls /var/log
+```
+
+Создадим описание тестового модуля, пишущего логи параллельно в два файла:
+```bash
+vi twolog.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: counter
+spec:
+  containers:
+  - name: count
+    image: busybox
+    args:
+    - /bin/sh
+    - -c
+    - >
+      i=0;
+      while true;
+      do
+        echo "$i: $(date)" >> /var/log/1.log;
+        echo "$(date) INFO $i" >> /var/log/2.log;
+        i=$((i+1));
+        sleep 1;
+      done
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+  volumes:
+  - name: varlog
+    emptyDir: {}
+```
+
+Создадим тестовый модуль, пишущий логи параллельно в два файла:
+```bash
+kubectl apply -f twolog.yaml
+```
+
+Изучим папку с файлами логов, созданных в тестовом модуле:
+```bash
+kubectl exec counter -- ls /var/log
+```
+
+Создадим описание тестового модуля, пишущего логи параллельно в два файла и имеющего два sidecar контейнера, читающих логи в стандартный поток вывода:
+```bash
+vi counter-with-sidecars.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: counter
+spec:
+  containers:
+  - name: count
+    image: busybox
+    args:
+    - /bin/sh
+    - -c
+    - >
+      i=0;
+      while true;
+      do
+        echo "$i: $(date)" >> /var/log/1.log;
+        echo "$(date) INFO $i" >> /var/log/2.log;
+        i=$((i+1));
+        sleep 1;
+      done
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+  - name: count-log-1
+    image: busybox
+    args: [/bin/sh, -c, 'tail -n+1 -f /var/log/1.log']
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+  - name: count-log-2
+    image: busybox
+    args: [/bin/sh, -c, 'tail -n+1 -f /var/log/2.log']
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+  volumes:
+  - name: varlog
+    emptyDir: {}
+```
+
+Создадим тестовый модуль, пишущий логи параллельно в два файла и имеющий два sidecar контейнера, читающих логи в стандартный поток вывода:
+```bash
+kubectl apply -f counter-with-sidecars.yaml
+```
+
+Изучим логи первого sidecar контейнера:
+```bash
+kubectl logs counter count-log-1
+```
+
+Изучим логи второго sidecar контейнера:
+```bash
+kubectl logs counter count-log-2
+```
+
+Создадим описание конфигурации развёртывания тестового модуля:
+```bash
+vi nginx.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.7.9
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+```
+
+Создадим развёртывание тестового модуля из этого описания:
+```bash
+kubectl apply -f nginx.yaml
+```
+
+Изучим логи созданного тестового модуля:
+```bash
+kubectl logs $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
+```
+
+Изучим логи одного из контейнеров ранее созданного тестового модуля:
+```bash
+kubectl logs counter -c count-log-1
+```
+
+Изучим логи всех контейнеров ранее созданного тестового модуля:
+```bash
+kubectl logs counter --all-containers=true
+```
+
+Изучим логи всех модулей с определённой меткой:
+```bash
+kubectl logs -l app=nginx
+```
+
+Изучим логи ранее завершённого контейнера созданного тестового модуля (если такой есть):
+```bash
+kubectl logs -p -c nginx $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
+```
+
+Изучим логи одного из контейнеров ранее созданного тестового модуля, активировав режим слежения:
+```bash
+kubectl logs -f -c count-log-1 counter
+```
+
+Выведем определённое количество логов созданного тестового модуля:
+```bash
+kubectl logs --tail=20 $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
+```
+
+Выведем логи созданного тестового модуля за определённый период:
+```bash
+kubectl logs --since=1h $(kubectl get po | grep nginx | head -n 1 | awk '{print $1}')
+```
+
+Выведем логи контейнеров с определённым именем заданной конфигурации развёртывания:
+```bash
+kubectl logs deployment/nginx-deployment -c nginx
+```
+
+Сохраним логи одного из контейнеров ранее созданного тестового модуля в файл:
+```bash
+kubectl logs counter -c count-log-1 > count.log
+```
+
+Удалим созданные ресурсы Kubernetes:
+```bash
+kubectl delete deployment nginx-deployment
+kubectl delete po counter
+```
