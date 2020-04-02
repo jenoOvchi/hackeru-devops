@@ -3010,6 +3010,7 @@ find /storage/dynamic -name file1.txt
 
 Удалим созданные конфигурации развёртывания, сервисы, заявки на постоянные тома и постоянные тома:
 ```bash
+kubectl delete deployments kubeserve
 kubectl delete svc nfs-provisioner
 kubectl delete deployments --all
 kubectl delete pvc --all
@@ -3113,7 +3114,7 @@ kubectl config set-credentials chad --username=chad --password=password
 
 Зададим настройки кластера для конфигурации kubectl:
 ```bash
-kubectl config set-cluster kubernetes --server=https://192.168.10.2:6443 --certificate-authority=ca.crt --embed-certs=true
+kubectl config set-cluster kubernetes --server=https://192.168.10.2:6443 --certificate-authority=/etc/kubernetes/pki/ca.crt --embed-certs=true
 ```
 
 Добавим пользователя для конфигурации kubectl:
@@ -3124,11 +3125,6 @@ kubectl config set-credentials chad --username=chad --password=password
 Зададим контекст для конфигурации kubectl:
 ```bash
 kubectl config set-context kubernetes --cluster=kubernetes --user=chad --namespace=default
-```
-
-Используем заданный контекст для конфигурации kubectl:
-```bash
-kubectl config use-context kubernetes
 ```
 
 Используем заданный контекст для конфигурации kubectl:
@@ -3165,7 +3161,7 @@ kubectl create ns web
 
 Создадим yaml описание для роли в пространстве имён "web", позволяющей просматривать список сервисов данного пространства имён:
 ```bash
-vi role.yaml
+vi role-new.yaml
 ```
 
 ```yaml
@@ -3182,7 +3178,7 @@ rules:
 
 Создадим роль в пространстве имён "web", позволяющую просматривать список сервисов данного пространства имён:
 ```bash
-kubectl create -f role.yaml
+kubectl create -f role-new.yaml
 ```
 
 Создадим привязку сервисного аккаунта "web:default" к созданной роли "service-reader":
@@ -3428,7 +3424,7 @@ kubectl label ns default tenant=web
 
 Создадим ещё один тестовый модуль для проверки работы сетевой политики:
 ```bash
-kubectl run psql --rm -it --image=governmentpaas/psql --labels=app=web /bin/sh
+kubectl run psql --rm -it --image=governmentpaas/psql /bin/sh
 ```
 
 Проверим доступность первого тестового модуля через сервис (password - mysecretpassword):
@@ -3468,7 +3464,7 @@ kubectl apply -f ipblock-netpolicy.yaml
 
 Создадим ещё один тестовый модуль для проверки работы сетевой политики:
 ```bash
-kubectl run psql --rm -it --image=governmentpaas/psql --labels=app=web /bin/sh
+kubectl run psql --rm -it --image=governmentpaas/psql /bin/sh
 ```
 
 Проверим доступность первого тестового модуля через сервис (password - mysecretpassword):
@@ -3556,6 +3552,8 @@ spec:
   podSelector:
     matchLabels:
       app: web
+  policyTypes:
+  - Egress
   egress:
   - to:
     - podSelector:
@@ -3595,420 +3593,6 @@ kubectl delete svc postgres
 
 #### Задание:
 Создать отдельные сетевые политики (Ingress и Egress) для PodtgreSQL и bookapp, разрешающие для всех доступ к внутреннему DNS, разрешающие внешний доступ к bookapp откуда угодно, разрешающие  доступ из bookapp в PodtgreSQL и запрещающие всё остальное.
-
-Вновь создадим тестовый модуль для демонстрации файлов, монтируемых из секрета сервисного аккаутнта:
-```bash
-kubectl create -f busybox-sa.yaml
-```
-
-Выведем список файлов, смонтированных из секрета сервисного аккаутнта:
-```bash
-kubectl exec busybox -- ls /var/run/secrets/kubernetes.io/serviceaccount
-```
-
-Установим пакеты, необходимые для создания запросов на подпись сертификата:
-```bash
-wget -q --show-progress --https-only --timestamping \
-  https://pkg.cfssl.org/R1.2/cfssl_linux-amd64 \
-  https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
-```
-
-Сделаем файлы скачанных пакетов исполняемыми:
-```bash
-chmod +x cfssl_linux-amd64 cfssljson_linux-amd64
-```
-
-Переместим файлы скачанных пакетов в каталог исполняемых файлов:
-```bash
-sudo mv cfssl_linux-amd64 /usr/local/bin/cfssl
-sudo mv cfssljson_linux-amd64 /usr/local/bin/cfssljson
-```
-
-Проверим, что скачанные пакеты работают корректно:
-```bash
-cfssl version
-```
-
-Создадим файл с JSON описанием запроса на подпись сертификата, в который входят доменные имена и IP адреса, которые будут использоваться HTTPS сервером, для которого создаётся сертификат:
-```bash
-cat <<EOF | cfssl genkey - | cfssljson -bare server
-{
-  "hosts": [
-    "nginx.default.svc.cluster.local",
-    "nginx.default.pod.cluster.local",
-    "172.168.0.24",
-    "10.0.34.2"
-  ],
-  "CN": "nginx.default.pod.cluster.local",
-  "key": {
-    "algo": "ecdsa",
-    "size": 256
-  }
-}
-EOF
-```
-
-Создадим файл с YAML описанием запроса на подпись сертификата в Kubernetes:
-```bash
-cat <<EOF | kubectl create -f -
-apiVersion: certificates.k8s.io/v1beta1
-kind: CertificateSigningRequest
-metadata:
-  name: pod-csr.web
-spec:
-  groups:
-  - system:authenticated
-  request: $(cat server.csr | base64 | tr -d '\n')
-  usages:
-  - digital signature
-  - key encipherment
-  - server auth
-EOF
-```
-
-Изучим созданные запросы на подпись сертификата:
-```bash
-kubectl get csr
-```
-
-Изучим описание созданного запроса на подпись сертификата:
-```bash
-kubectl describe csr pod-csr.web
-```
-
-Подтвердим созданный запрос на подпись сертификата:
-```bash
-kubectl certificate approve pod-csr.web
-```
-
-Изучим описание результатов выполнения запроса на сертификат:
-```bash
-kubectl get csr pod-csr.web -o yaml
-```
-
-Извлечём результат подписи сертификата в файл:
-```bash
-kubectl get csr pod-csr.web -o jsonpath='{.status.certificate}' \
-    | base64 --decode > server.crt
-```
-
-Развернём в Kubernetes реестр образов Docker:
-```bash
-kubectl run registry --image=registry:2 --port=5000
-```
-
-Создадим маршрут для развёрнутого реестра образов Docker:
-```bash
-kubectl expose deployment registry --port=5000
-```
-
-Скачаем образ, на котором будем производить демонстрацию работы частного реестра образов Docker:
-```bash
-sudo docker pull busybox:1.28.4
-```
-
-Тегируем скачанный образ Docker именем, включающим в себя путь к развёрнутому реестру образов:
-```bash
-sudo docker tag busybox:1.28.4 $(kubectl get svc registry -o jsonpath='{.spec.clusterIP}'):5000/busybox:latest
-```
-
-Добавим развёрнутый реестр образов Docker в список разрешённых небезопасных образов:
-```bash
-cat << EOF | sudo tee /etc/docker/daemon.json
-{
- "insecure-registries" : ["$(kubectl get svc registry -o jsonpath='{.spec.clusterIP}'):5000"]
-}
-EOF
-```
-
-Перезагрузим сервис Docker и его демон:
-```bash
-sudo systemctl daemon-reload
-sudo service docker restart
-```
-
-Загрузим протегированный образ Docker в развёрнутый реестр образов:
-```bash
-sudo docker push $(kubectl get svc registry -o jsonpath='{.spec.clusterIP}'):5000/busybox:latest
-```
-
-Создадим файл с JSON описанием запроса на подпись сертификата для Docker Registry:
-```bash
-cat <<EOF | cfssl genkey - | cfssljson -bare registry
-{
-  "hosts": [
-    "registry.example.com",
-    "192.168.10.3"
-  ],
-  "CN": "registry.example.com",
-  "key": {
-    "algo": "ecdsa",
-    "size": 256
-  }
-}
-EOF
-```
-
-Создадим файл с YAML описанием запроса на подпись сертификата в Kubernetes:
-```bash
-cat <<EOF | kubectl create -f -
-apiVersion: certificates.k8s.io/v1beta1
-kind: CertificateSigningRequest
-metadata:
-  name: registry-csr.web
-spec:
-  groups:
-  - system:authenticated
-  request: $(cat registry.csr | base64 | tr -d '\n')
-  usages:
-  - digital signature
-  - key encipherment
-  - server auth
-EOF
-```
-
-Подтвердим созданный запрос на подпись сертификата:
-```bash
-kubectl certificate approve registry-csr.web
-```
-
-Извлечём результат подписи сертификата в файл:
-```bash
-kubectl get csr registry-csr.web -o jsonpath='{.status.certificate}' \
-    | base64 --decode > registry.crt
-```
-
-Создадим TLS секрет для реестра образов из созданного ключа и сертификата:
-```bash
-kubectl create secret tls registry --cert=./registry.crt --key=./registry-key.pem
-```
-
-Удалим старый сервис и конфигурацию развёртывания реестра образов Docker:
-```bash
-kubectl delete svc registry
-kubectl delete deployment registry
-```
-
-Создадим описание для скорректированной конфигурации развёртывания реестра образов Docker:
-```bash
-vi registry-deployment.yaml
-```
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: registry
-spec:
-  selector:
-    matchLabels:
-      run: registry
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        run: registry
-    spec:
-      volumes:
-      - name: secret-volume
-        secret:
-          secretName: registry
-      containers:
-      - name: main
-        image: registry:2
-        volumeMounts:
-        - name: secret-volume
-          readOnly: true
-          mountPath: "/certs"
-        ports:
-        - containerPort: 443
-          protocol: TCP
-          name: https
-        env:
-        - name: REGISTRY_HTTP_ADDR
-          value: "0.0.0.0:443"
-        - name: REGISTRY_HTTP_TLS_CERTIFICATE
-          value: "/certs/tls.crt"
-        - name: REGISTRY_HTTP_TLS_KEY
-          value: "/certs/tls.key"
-```
-
-Скорректируем конфигурацию развёртывания реестра образов Docker:
-```bash
-kubectl apply -f registry-deployment.yaml
-```
-
-Выставим развёрнутый реестр образов Docker на одном из портов узлов кластера Kubernetes:
-```bash
-kubectl expose deployment registry --port=443 --type=NodePort
-```
-
-Тегируем скачанный образ Docker именем, включающим в себя путь к развёрнутому реестру образов через один из узлов кластера Kubernetes:
-```bash
-sudo docker tag busybox:1.28.4 registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')/busybox:latest
-```
-
-### Следующий блок команд выполняется на всех узлах
-
-Добавим в файл "/etc/hosts" запись для реестра образов Docker, выставленного узлах кластера Kubernetes:
-```bash
-sudo vi /etc/hosts
-```
-
-```ini
-...
-192.168.10.3 registry.example.com
-```
-
-Удалим предыдущий развёрнутый реестр образов Docker из списка разрешённых незащищённых реестров образов Docker:
-```bash
-cat << EOF | sudo tee /etc/docker/daemon.json
-{
-}
-EOF
-```
-
-Перезагрузим сервис Docker и его демон:
-```bash
-sudo systemctl daemon-reload
-sudo service docker restart
-```
-
-### Следующий блок команд выполняется на всех узлах
-
-Добавим CA кластера Kubernetes в список доверенных сертификатов Docker:
-```bash
-sudo mkdir -p /etc/docker/certs.d/registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')
-sudo ln -s /etc/kubernetes/pki/ca.crt /etc/docker/certs.d/registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')/ca-certificates.crt
-```
-
-Загрузим протегированный образ Docker в развёрнутый по новому адресу реестр образов:
-```bash
-sudo docker push registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')/busybox:latest
-```
-
-Создадим секрет с файлом аутентификации для реестра образов:
-```bash
-sudo apt-get install apache2-utils
-htpasswd -Bbn testuser testpassword > ./htpasswd
-kubectl create secret generic htpasswd --from-file=./htpasswd
-```
-
-Очистим описание конфигурации развёртывания реестра образов Docker:
-```bash
-echo "" > registry-deployment.yaml
-```
-
-Создадим описание для скорректированной конфигурации развёртывания реестра образов Docker:
-```bash
-vi registry-deployment.yaml
-```
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: registry
-spec:
-  selector:
-    matchLabels:
-      run: registry
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        run: registry
-    spec:
-      volumes:
-      - name: secret-volume
-        secret:
-          secretName: registry
-      - name: htpasswd-volume
-        secret:
-          secretName: htpasswd
-      containers:
-      - name: main
-        image: registry:2
-        volumeMounts:
-        - name: secret-volume
-          readOnly: true
-          mountPath: "/certs"
-        - name: htpasswd-volume
-          readOnly: true
-          mountPath: "/auth"
-        ports:
-        - containerPort: 443
-          protocol: TCP
-          name: https
-        env:
-        - name: REGISTRY_HTTP_ADDR
-          value: "0.0.0.0:443"
-        - name: REGISTRY_HTTP_TLS_CERTIFICATE
-          value: "/certs/tls.crt"
-        - name: REGISTRY_HTTP_TLS_KEY
-          value: "/certs/tls.key"
-        - name: REGISTRY_AUTH
-          value: "htpasswd"
-        - name: REGISTRY_AUTH_HTPASSWD_REALM
-          value: "Registry Realm"
-        - name: REGISTRY_AUTH_HTPASSWD_PATH
-          value: "/auth/htpasswd"
-```
-
-Скорректируем конфигурацию развёртывания реестра образов Docker:
-```bash
-kubectl apply -f registry-deployment.yaml
-```
-
-Авторизуемся в развёрнутом реестре образов Docker (testuser/testpassword):
-```bash
-sudo docker login registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')
-```
-
-Загрузим протегированный образ Docker в развёрнутый по новому адресу реестр образов:
-```bash
-sudo docker push registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')/busybox:latest
-```
-
-Создадим секрет с параметрами аутентификации для загрузки образов из развёрнутого реестра:
-```bash
-kubectl create secret docker-registry acr --docker-server=https://registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}') --docker-username=testuser --docker-password='testpassword' --docker-email=user@example.com
-```
-
-Создадим описание тестового модуля, использующего образ, зугруженный в реестр образов Docker:
-```bash
-cat << EOF | sudo tee acr-pod.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: acr-pod
-  labels:
-    app: busybox
-spec:
-  containers:
-    - name: busybox
-      image: registry.example.com:$(kubectl get svc registry -o jsonpath='{.spec.ports[].nodePort}')/busybox:latest
-      command: ['sh', '-c', 'echo Hello Kubernetes! && sleep 3600']
-      imagePullPolicy: Always
-EOF
-```
-
-Создадим тестовый модуль, использующий образ, зугруженный в реестр образов Docker:
-```bash
-kubectl apply -f acr-pod.yaml
-```
-
-Проверим, что тестовый модуль успешно создан:
-```bash
-kubectl get pods
-```
-
-Удалим созданные ресурсы:
-```bash
-kubectl delete deployment registry
-kubectl delete po acr-pod busybox
-kubectl delete svc registry docker-registry
-```
 
 Создадим тестовый модуль без использования контекста безопасности:
 ```bash
@@ -4237,7 +3821,7 @@ spec:
       readOnly: false
   volumes:
   - name: my-volume
-    emptyDir:
+    emptyDir: {}
 ```
 
 Создадим тестовый модуль с контекстом безопасности, запрещающим запись в основную файловую систему модуля и предоставляющим возможность записи в смонтированный том:
@@ -4300,7 +3884,7 @@ spec:
       readOnly: false
   volumes:
   - name: shared-volume
-    emptyDir:
+    emptyDir: {}
 ```
 
 Создадим тестовый модуль с контекстом безопасности, определяющим группу файловой системы на уровне модуля и двух различных пользователей файловой системы для каждого из двух контейнеров:
@@ -4916,6 +4500,8 @@ wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-
 sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" >> /etc/apt/sources.list.d/pgdg.list'
 sudo apt-get update
 sudo apt-get install -y postgresql postgresql-contrib
+sudo service postgresql enable
+sudo service postgresql start
 ```
 
 Настроим использование PostgreSQL из под пользователя "vagrant":
@@ -4938,7 +4524,7 @@ cd ${GOPATH-$HOME/go}/src/github.com/wrouesnel/postgres_exporter
 go run mage.go binary
 export DATA_SOURCE_NAME="postgresql://vagrant:vagrant@localhost:5432/vagrant"
 ./postgres_exporter
-./postgres_exporter &
+nohup ./postgres_exporter > exporter.out 2>&1 &
 ```
 
 Откроем URL Prometheus PostgreSQL Exporter (http://192.168.10.2:9187/metrics) в браузере и проверим, что метрики БД доступны по HTTP.
@@ -4980,6 +4566,7 @@ scrape_configs:
 Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "pg_up" и нажмём кнопку "Execute". Изучим список выведенных метрик.
 Нажмём кнопку "Graph" и изучим график доступности БД.
 
+Установим Alert Manager:
 ```bash
 sudo adduser --no-create-home --disabled-login --shell /bin/false --gecos "Alertmanager User" alertmanager
 sudo mkdir /etc/alertmanager
@@ -5036,7 +4623,7 @@ inhibit_rules:
   equal: ['alertname', 'cluster', 'service']
 ```
 
-
+Создадим описание сервиса для Alert Manager:
 ```bash
 sudo vi /etc/systemd/system/alertmanager.service
 ```
@@ -5060,6 +4647,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
+Запустим Alert Manager:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable alertmanager
@@ -5068,7 +4656,7 @@ rm alertmanager-0.20.0.linux-amd64.tar.gz
 rm -rf alertmanager-0.20.0.linux-amd64
 ```
 
-http://192.168.10.2:9093/#/alerts
+Откроем Web интерфейс Alert Manager (http://192.168.10.2:9093/#/alerts) и проверим, что он доступен из браузера. Изучим компоненты интерфейса более подробно.
 
 Сконфигурируем Prometheus для использования развёрнутого Alert Manager:
 ```bash
@@ -5107,6 +4695,7 @@ scrape_configs:
       - targets: ['192.168.10.2:9187']
 ```
 
+Создадим правило Prometheus для генерации алерта:
 ```bash
 echo "" > prometheus.rules.yml
 vi prometheus.rules.yml
@@ -5128,12 +4717,220 @@ groups:
       description: "On {{ $labels.instance }} instance of {{ $labels.job }} numbackends has been more than 1"
 ```
 
-
+Запустим Prometheus в виде демона:
+```bash
 nohup ./prometheus --config.file=prometheus.yml > prometheus.out 2>&1 &
+```
 
+Запустим фреймворк для тестирования PostgeSQL для создания алерта:
+```bash
 pgbench -T 120 vagrant
+```
+
+Перейдём в веб интерфейс Prometheus и проверим, что созданный алерт перешёл в статус "Firing". Откроем Web интерфейс Alert Manager и проверим, что появился алерт.
+
+Настроим отправку уведомлений из Alert Manager в Slack. Для этого перейдём по ссылке на приложение "Incoming WebHooks" для Slack (https://slack.com/apps/A0F7XDUAZ-incoming-webhooks) и добавим приложение к нашему каналу:
+- нажмём на кнопку "Add to Slack"
+- выберем в списке "Post to Channel" занчение "#hackeru-notifications"
+- нажмём на кнопку "Add Incoming WebHook integretion"
+- скопируем ссылку на "Webhook URL": https://hooks.slack.com/services/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
+
+Настроим отправку уведомлений в Slack в конфигурации Alert Manager:
+```bash
+sudo vi /etc/alertmanager/alertmanager.yml
+```
+
+```yaml
+global:
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alertmanager@example.org'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: 'password'
+
+templates:
+- '/etc/alertmanager/template/*.tmpl'
 
 
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 1m
+  repeat_interval: 3h
+  receiver: slack-channel
+  routes:
+  - match:
+      job: "PostgreSQL"
+    receiver: slack-channel
+
+receivers:
+- name: slack-channel
+  slack_configs:
+  - api_url: https://hooks.slack.com/services/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
+    channel: #hackeru-notifications
+    icon_url: https://avatars3.githubusercontent.com/u/3380462
+    send_resolved: true
+    title: '{{ template "custom_title" . }}'
+    text: '{{ template "custom_slack_message" . }}'
+
+inhibit_rules:
+- source_match:
+    severity: 'page'
+  target_match:
+    severity: 'warning'
+  # Apply inhibition if the alertname is the same.
+  # CAUTION: 
+  #   If all label names listed in `equal` are missing 
+  #   from both the source and target alerts,
+  #   the inhibition rule will apply!
+  equal: ['alertname', 'cluster', 'service']
+```
+
+Перезапустим Alert Manager:
+```bash
+sudo systemctl stop alertmanager
+sudo systemctl start alertmanager
+```
+
+Запустим фреймворк для тестирования PostgeSQL для создания алерта:
+```bash
+pgbench -T 120 vagrant
+```
+
+Откроем в Slack канал "#hackeru-notifications" и проверим, что уведомление пришло.
+
+Настроим предоставление метрик в собственном приложении на Golang. Для этого клонируем с GitHub пример тестового приложения и установим нужные зависимости:
+```bash
+cd ..
+git clone https://github.com/jenoOvchi/hackeru-devops-go-simple.git
+cd hackeru-devops-go-simple/
+go get github.com/prometheus/client_golang/prometheus
+go get github.com/prometheus/client_golang/prometheus/promauto
+go get github.com/prometheus/client_golang/prometheus/promhttp
+```
+
+Добавим в приложение нужную зависимость и Handler:
+```bash
+vi hello.go
+```
+
+```go
+...
+import (
+    "fmt"
+    "net/http"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+...
+func main() {
+    http.HandleFunc("/", HelloWorld)
+    http.Handle("/metrics", promhttp.Handler())
+    http.ListenAndServe(":3000", nil)
+}
+...
+```
+
+Соберём и запустим приложение:
+```bash
+go build .
+./hackeru-devops-go-simple
+```
+
+Откроем в браузере адрес приложения (http://192.168.10.2:3000/metrics) и проверим, что его метрики доступны. Несколько раз открываем страницу http://192.168.10.2:3000 и изучаем метрику promhttp_metric_handler_requests_total{code="200"}.
+
+Добавим в код приложения сбор и предоставление отдельной метрики:
+```bash
+vi hello.go
+```
+
+```go
+...
+import (
+    "fmt"
+    "time"
+    "net/http"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+...
+func recordMetrics() {
+        go func() {
+                for {
+                        opsProcessed.Inc()
+                        time.Sleep(2 * time.Second)
+                }
+        }()
+}
+
+var (
+        opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
+                Name: "myapp_processed_ops_total",
+                Help: "The total number of processed events",
+        })
+)
+...
+func main() {
+    recordMetrics()
+    http.HandleFunc("/", HelloWorld)
+    http.Handle("/metrics", promhttp.Handler())
+    http.ListenAndServe(":3000", nil)
+}
+...
+```
+
+Соберём и запустим приложение:
+```bash
+go build .
+./hackeru-devops-go-simple 
+```
+
+Откроем в браузере адрес приложения (http://192.168.10.2:3000/metrics) и проверим, что его метрики доступны. Несколько раз открываем страницу http://192.168.10.2:3000 и изучаем метрику myapp_processed_ops_total.
+
+#### Задание:
+Добавить в приложение bookapp предоставление метрик по HTTP, добавить пользовательскую метрику, запустить его с помощью Docker Compose и настроить для него сбор метрик с помощью Prometheus (сбор метрик с помощью PostgreSQL оставить):
+
+Установка Docker:
+```bash
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+   $(lsb_release -cs) \
+   stable"
+sudo apt-get update
+sudo apt-get install -y docker-ce=18.06.1~ce~3-0~ubuntu
+```
+
+Установим Grafana:
+```bash
+sudo wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+sudo add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
+sudo apt-get update
+sudo apt-get install -y grafana=6.3.5
+```
+
+Запустим сервис Grafana:
+```bash
+sudo systemctl start grafana-server
+sudo systemctl status grafana-server
+```
+
+Открываем в браузере Web интерфейс Grafana http://192.168.10.2:3000 и авторизуемся (admin/admin). Изучаем элементы интерфейса Grafana и разделы меню.
+
+Нажимаем на кнопку "Configurations/Data Sources", "Add data source" и добавляем новый источник данных:
+- Type: Prometheus
+- Name: Prometheus
+- Url: http://192.168.10.2:9090
+- Access: Server
+
+Нажимаем на кнопку "Save & Test".
+
+Открываем официальный сайт Grafana (https://grafana.com), выбираем раздел "Dashboards" и находим в поиске Dashboard "PostgreSQL Database". 
+
+Добавим информационную панель. Для этого нажмём на кнопку "+/Import" и в поле "Grafana.com Dashboard" вводим номер дэшборда (9628). В списке "DS_PROMETHEUS" выбираем "Prometheus" и нажимаем "Import".
+
+Нажмём на один из графиков, выберем пункт "edit" и изучим способ сортировки данных.
+
+#### Задание:
+Добавить дэшборд для мониторинга Go приложений.
 
 
 ## Topic 11: Logging with ELK Stack
