@@ -3594,6 +3594,11 @@ kubectl delete svc postgres
 #### Задание:
 Создать отдельные сетевые политики (Ingress и Egress) для PodtgreSQL и bookapp, разрешающие для всех доступ к внутреннему DNS, разрешающие внешний доступ к bookapp откуда угодно, разрешающие  доступ из bookapp в PodtgreSQL и запрещающие всё остальное.
 
+Удалим canal:
+```bash
+kubectl delete -f canal.yaml
+```
+
 Создадим тестовый модуль без использования контекста безопасности:
 ```bash
 kubectl run pod-with-defaults --image alpine --restart Never -- /bin/sleep 999999
@@ -4086,7 +4091,7 @@ git clone https://github.com/linuxacademy/metrics-server
 
 Создадим развёртывание сервера метрик и другие необходимые ему ресурсы кластера:
 ```bash
-kubectl apply -f ~/metrics-server/deploy/1.8+/
+kubectl apply -f ./metrics-server/deploy/1.8+/
 ```
 
 Проверим доступность API сервера метрик:
@@ -4295,7 +4300,7 @@ wget https://github.com/prometheus/prometheus/releases/download/v2.17.1/promethe
 
 Разархивируем Prometheus:
 ```bash
-tar xvfz prometheus-*.tar.gz
+tar xvfz prometheus-*.tar.gz.1
 cd prometheus-*
 ```
 
@@ -4485,7 +4490,7 @@ scrape_configs:
 ./prometheus --config.file=prometheus.yml
 ```
 
-Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "job_service:rpc_durations_seconds_count:avg_rate5m" и нажмём кнопку "Execute". Изучим список выведенных метрик (обратим внимание на теги "canary" и "production").
+Откроем Web интерфейс Prometheus, нажмём на кнопку "Console", в поле "Expression" введём "job_service:rpc_durations_seconds_count:avg_rate5m" и нажмём кнопку "Execute".
 Нажмём кнопку "Graph" и изучим графики рассчитанных значений метрики.
 
 Остановим запущенные процессы для генерации метрик
@@ -4724,6 +4729,7 @@ nohup ./prometheus --config.file=prometheus.yml > prometheus.out 2>&1 &
 
 Запустим фреймворк для тестирования PostgeSQL для создания алерта:
 ```bash
+pgbench -i
 pgbench -T 120 vagrant
 ```
 
@@ -4733,7 +4739,7 @@ pgbench -T 120 vagrant
 - нажмём на кнопку "Add to Slack"
 - выберем в списке "Post to Channel" занчение "#hackeru-notifications"
 - нажмём на кнопку "Add Incoming WebHook integretion"
-- скопируем ссылку на "Webhook URL": https://hooks.slack.com/services/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
+- скопируем ссылку на "Webhook URL": https://hooks.slack.com/services/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
 
 Настроим отправку уведомлений в Slack в конфигурации Alert Manager:
 ```bash
@@ -4765,7 +4771,7 @@ route:
 receivers:
 - name: slack-channel
   slack_configs:
-  - api_url: https://hooks.slack.com/services/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
+  - api_url: https://hooks.slack.com/services/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
     channel: #hackeru-notifications
     icon_url: https://avatars3.githubusercontent.com/u/3380462
     send_resolved: true
@@ -4929,20 +4935,113 @@ sudo systemctl status grafana-server
 
 Нажмём на один из графиков, выберем пункт "edit" и изучим способ сортировки данных.
 
+Добавим график на загруженный дашборд.
+
 #### Задание:
 Добавить дэшборд для мониторинга Go приложений.
 
+## Topic 11: Helm
 
-## Topic 11: Logging with ELK Stack
+Остановим виртуальную машину с Prometheus и запустим кластер Kubernetes. 
 
-Изучим директорию, в которой Kubelet хранит логи контейнеров:
+Установим Helm на локальную машину:
 ```bash
-ls /var/log/containers
+brew install helm
+```
+
+Добавим репозиторий стабильных чартов Helm от Google под именем "stable":
+```bash
+helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+```
+
+Изучим список доступных репозиториев чартов:
+```bash
+helm repo list
+```
+
+Изучим список чартов, доступный в репозитории "stable":
+```bash
+helm search repo stable
+```
+
+Обновим список доступных чартов репозитория "stable":
+```bash
+helm repo update
+```
+
+Изучим страницу репозитория чарта MySQL на GitHub (https://github.com/helm/charts/tree/master/stable/mysql).
+
+Изучим информацию о чарте:
+```bash
+helm show chart stable/mysql
+helm show all stable/mysql
+```
+
+Установим чарт MySQL из репозитория "stable":
+```bash
+helm install stable/mysql --generate-name --set persistence.enabled=false
+```
+
+Изучим вывод Helm. Проверим, что MySQL успешно установлен:
+```bash
+kubectl get pods
+```
+
+Проверим доступность БД (подставить свои имена секрета и сервиса!!!):
+```bash
+kubectl get secret --namespace default mysql-1586121559 -o jsonpath="{.data.mysql-root-password}" | base64 --decode; echo
+kubectl run -i --tty ubuntu --image=ubuntu:16.04 --restart=Never -- bash -il
+apt-get update && apt-get install mysql-client -y
+mysql -h mysql-1586121559 -p
+> show databases;
+> exit
+```
+
+Изучим список установленных релизов Helm:
+```bash
+helm ls
+```
+
+Изучим список установленных релизов Helm:
+```bash
+helm uninstall $(helm ls | grep mysql | awk '{print $1}')
+kubectl delete pod/ubuntu
+```
+
+Изучим страницу репозитория чарта prometheus на GitHub (https://github.com/helm/charts/tree/master/stable/prometheus-operator).
+
+Установим с помощью Helm оператор Prometheus (!!! Не стоит делать это на локальном скластере!!!):
+```bash
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml --validate=false
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml --validate=false
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml --validate=false
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml --validate=false
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml --validate=false
+kubectl apply -f https://raw.githubusercontent.com/coreos/prometheus-operator/release-0.37/example/prometheus-operator-crd/monitoring.coreos.com_thanosrulers.yaml --validate=false
+kubectl create ns monitoring
+helm install prometheus-mon stable/prometheus-operator --set prometheusOperator.createCustomResource=false -n monitoring
+```
+
+Опустим виртуальную машину с Prometheus:
+```bash
+vagrant halt
+```
+
+## Topic 12: Logging with ELK Stack
+
+Вернёмся в директорию k8s:
+```bash
+cd ..
+```
+
+Поднимем кластер Kubernetes
+```bash
+vagrant up
 ```
 
 Изучим директорию, в которой Kubelet хранит логи контейнеров:
 ```bash
-ls /var/log
+ls /var/log/containers
 ```
 
 Создадим описание тестового модуля, пишущего логи параллельно в два файла:
@@ -5142,4 +5241,154 @@ kubectl logs counter -c count-log-1 > count.log
 ```bash
 kubectl delete deployment nginx-deployment
 kubectl delete po counter
+```
+
+#### Задание:
+Добавить логирование запросов в приложение bookapp, запустить обновлённую версию в Kubernetes, сделать запрос к приложению и изучить логи пода.
+
+Опустим кластер Kubernetes:
+```bash
+vagrant halt
+```
+
+Создадим директорию для файлов Elastic Search:
+```bash
+mkdir elastic
+cd elastic
+```
+
+Создаем описание серверов кластера:
+```bash
+vi Vagrantfile
+```
+
+```ruby
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.ssh.insert_key = false
+
+  config.vm.define "master" do |master|
+    master.vm.box = "ubuntu/xenial64"
+    master.vm.network "forwarded_port", guest: 80, host: 8080
+    master.vm.network "forwarded_port", guest: 443, host: 8443
+    master.vm.network "private_network", ip: "192.168.10.2"
+    master.vm.hostname = "master"
+    master.vm.provider "virtualbox" do |v|
+      v.memory = 2048
+      v.cpus = 2
+    end
+    master.vm.provision "shell", inline: <<-SHELL
+      cat > /etc/hosts << EOF
+127.0.0.1	localhost master
+EOF
+    SHELL
+  end
+end
+```
+
+Запускаем сервера кластера:
+```bash
+vagrant up
+```
+
+Проверяем подключение к серверам с помощью vagrant:
+```bash
+vagrant ssh master
+```
+
+Добавим нужные ключи и установим необходимые пакеты:
+```bash
+sudo wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+sudo echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+sudo apt-get update && sudo apt-get install -y openjdk-8-jre apt-transport-https wget nginx
+```
+
+Проверим версию Java:
+```bash
+java -version
+```
+
+Создаем пользователя и пароль для доступа к Kibana:
+```bash
+sudo echo "admin:`openssl passwd -apr1`" | sudo tee -a /etc/nginx/htpasswd.users
+```
+
+Конфигурируем Nginx для доступа к Kibana:
+```bash
+vi /etc/nginx/sites-available/kibana
+```
+
+```json
+server {
+listen 80;
+
+server_name suricata.server;
+
+auth_basic «Restricted Access»;
+auth_basic_user_file /etc/nginx/htpasswd.users;
+
+location / {
+proxy_pass localhost:5601;
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection 'upgrade';
+proxy_set_header Host $host;
+proxy_cache_bypass $http_upgrade;
+}
+}
+```
+
+Установим и запустим Elastic Search:
+```bash
+sudo apt-get install -y elasticsearch
+sudo systemctl daemon-reload
+sudo systemctl enable elasticsearch.service
+sudo systemctl start elasticsearch.service
+```
+
+Проверим, что Elastic Search запущен:
+```bash
+curl -X GET "localhost:9200/"
+```
+
+Установим и запустим Kibana:
+```bash
+sudo apt-get install -y kibana
+sudo systemctl daemon-reload
+sudo systemctl enable kibana.service
+sudo systemctl start kibana.service
+```
+
+Установим и запустим filebeat:
+```bash
+sudo apt-get install -y filebeat
+sudo systemctl daemon-reload
+sudo systemctl enable filebeat
+sudo systemctl start filebeat.service
+```
+
+Настроим filebeat:
+```bash
+sudo vi /etc/filebeat/filebeat.yml
+```
+
+```yaml
+filebeat.inputs:
+- type: log
+  paths:
+    - /path/to/log
+```
+
+Перезапустим filebeat:
+```bash
+sudo systemctl restart filebeat.service
+```
+
+Установим Elastic Search в Kubernetes  (!!! Не стоит делать это на локальном скластере!!!):
+```bash
+kubectl create ns logging
+helm install elastic-stack stable/elastic-stack -n logging
 ```
