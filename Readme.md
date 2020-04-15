@@ -5271,7 +5271,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.ssh.insert_key = false
 
   config.vm.define "master" do |master|
-    master.vm.box = "ubuntu/xenial64"
+    master.vm.box = "ubuntu/bionic64"
     master.vm.network "forwarded_port", guest: 80, host: 8080
     master.vm.network "forwarded_port", guest: 443, host: 8443
     master.vm.network "private_network", ip: "192.168.10.2"
@@ -5318,7 +5318,7 @@ sudo echo "admin:`openssl passwd -apr1`" | sudo tee -a /etc/nginx/htpasswd.users
 
 Конфигурируем Nginx для доступа к Kibana:
 ```bash
-vi /etc/nginx/sites-available/kibana
+sudo vi /etc/nginx/sites-available/kibana
 ```
 
 ```json
@@ -5327,11 +5327,11 @@ listen 80;
 
 server_name suricata.server;
 
-auth_basic «Restricted Access»;
+auth_basic "Restricted Access";
 auth_basic_user_file /etc/nginx/htpasswd.users;
 
 location / {
-proxy_pass localhost:5601;
+proxy_pass http://localhost:5601;
 proxy_http_version 1.1;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection 'upgrade';
@@ -5339,6 +5339,17 @@ proxy_set_header Host $host;
 proxy_cache_bypass $http_upgrade;
 }
 }
+```
+
+Обновляем конфигурацию Nginx:
+```bash
+sudo rm /etc/nginx/sites-enabled/default
+sudo ln -s /etc/nginx/sites-available/kibana /etc/nginx/sites-enabled/kibana
+```
+
+Перезапускаем Nginx:
+```bash
+sudo systemctl restart nginx
 ```
 
 Установим и запустим Elastic Search:
@@ -5362,6 +5373,290 @@ sudo systemctl enable kibana.service
 sudo systemctl start kibana.service
 ```
 
+Открываем в браузере URL Kibana (http://192.168.10.2/) и авторизуемся (admin/!QAZ2wsx) и изучаем интерфейс Kibana.
+
+Установим Go для запуска тестового приложения:
+```bash
+cd /tmp
+wget https://dl.google.com/go/go1.12.linux-amd64.tar.gz
+sudo tar -xvf go1.12.linux-amd64.tar.gz
+sudo mv go /usr/local
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/go
+export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+go version
+```
+
+Создадим директорию для тестового приложения:
+```bash
+mkdir testapp
+cd testapp
+```
+
+Создадим тестовое приложение на go для демонстрации логирования:
+```bash
+vi testapp.go
+```
+
+```go
+package main
+
+import (
+    "log"
+)
+
+func main() {
+    log.Print("Logging in Go!")
+}
+```
+
+Соберём тестовое приложение:
+```bash
+go build testapp.go
+```
+
+Запустим тестовое приложение и изучим выведенный лог:
+```bash
+./testapp
+```
+
+Изменим тестовое приложение для демонстрации записи журнала в файл:
+```bash
+vi testapp.go
+```
+
+```go
+package main
+
+import (
+    "log"
+    "os"
+)
+
+func main() {
+    file, err := os.OpenFile("info.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer file.Close()
+
+    log.SetOutput(file)
+    log.Print("Logging to a file in Go!")
+}
+```
+
+Соберём тестовое приложение:
+```bash
+go build testapp.go
+```
+
+Запустим тестовое приложение и изучим созданный файл журнала:
+```bash
+./testapp
+ls
+cat info.log
+```
+
+Установим фреймворк для журналирования:
+```bash
+go get "github.com/Sirupsen/logrus"
+```
+
+Изменим тестовое приложение для демонстрации работы фреймворка:
+```bash
+vi testapp.go
+```
+
+```go
+package main
+
+import (
+    "log"
+    log "github.com/Sirupsen/logrus"
+)
+
+func main() {
+    file, err := os.OpenFile("info.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer file.Close()
+
+    log.SetOutput(file)
+    log.Print("Logging to a file in Go!")
+}
+```
+
+Соберём тестовое приложение:
+```bash
+go build testapp.go
+```
+
+Запустим тестовое приложение и изучим созданный файл журнала:
+```bash
+./testapp
+ls
+cat info.log
+```
+
+Изучим различные уровни логирования, доступные в рамках фреймворка:
+```go
+log.Debug("Useful debugging information.")
+log.Info("Something noteworthy happened!")
+log.Warn("You should probably take a look at this.")
+log.Error("Something failed but I'm not quitting.")
+// Calls os.Exit(1) after logging
+log.Fatal("Bye.")
+// Calls panic() after logging
+log.Panic("I'm bailing.")
+```
+
+Изменим тестовое приложение для демонстрации работы различных уровней логирования:
+```bash
+vi testapp.go
+```
+
+```go
+package main
+
+import (
+    "os"
+
+    log "github.com/Sirupsen/logrus"
+)
+
+func main() {
+    file, err := os.OpenFile("info.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer file.Close()
+
+    log.SetOutput(file)
+    log.SetFormatter(&log.JSONFormatter{})
+    log.SetLevel(log.WarnLevel)
+
+    log.WithFields(log.Fields{
+        "animal": "walrus",
+        "size":   10,
+    }).Info("A group of walrus emerges from the ocean")
+
+    log.WithFields(log.Fields{
+        "omg":    true,
+        "number": 122,
+    }).Warn("The group's number increased tremendously!")
+
+    log.WithFields(log.Fields{
+        "omg":    true,
+        "number": 100,
+    }).Fatal("The ice breaks!")
+}
+```
+
+Соберём тестовое приложение:
+```bash
+go build testapp.go
+```
+
+Запустим тестовое приложение и изучим созданный файл журнала:
+```bash
+./testapp
+ls
+cat info.log
+```
+
+Создадим директорию для логов и сделаем её владельцем текущего пользователя:
+```bash
+sudo mkdir /var/log/testapp
+sudo chown vagrant:vagrant /var/log/testapp
+```
+
+Изменим тестовое приложение для демонстрации работы различных уровней логирования:
+```bash
+vi testapp.go
+```
+
+```go
+package main
+
+import (
+    "os"
+
+    log "github.com/Sirupsen/logrus"
+)
+
+func main() {
+    file, err := os.OpenFile("/var/log/testapp/info.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer file.Close()
+
+    log.SetOutput(file)
+    log.SetFormatter(&log.JSONFormatter{})
+    log.SetLevel(log.WarnLevel)
+
+    log.WithFields(log.Fields{
+        "animal": "walrus",
+        "size":   10,
+    }).Info("A group of walrus emerges from the ocean")
+
+    log.WithFields(log.Fields{
+        "omg":    true,
+        "number": 122,
+    }).Warn("The group's number increased tremendously!")
+
+    log.WithFields(log.Fields{
+        "omg":    true,
+        "number": 100,
+    }).Fatal("The ice breaks!")
+}
+```
+
+Соберём тестовое приложение:
+```bash
+go build testapp.go
+```
+
+Запустим тестовое приложение и изучим созданный файл журнала:
+```bash
+./testapp
+ls
+cat /var/log/testapp/info.log
+```
+
+Создадим скрипт для непрерывного запуска данного приложения:
+```bash
+vi testapp-loop.bash
+```
+
+```bash
+#!/bin/bash
+while true; do
+  ./testapp
+  sleep 1
+done
+```
+
+Сделаем созданный скрипт исполняемым:
+```bash
+chmod +x testapp-loop.bash
+```
+
+Запустим созданный скрипт:
+```bash
+nohup /home/vagrant/testapp/testapp-loop.bash > testapp-loop.out 2>&1 &
+```
+
+Изучим созданный лог:
+```bash
+tail -f /var/log/testapp/info.log
+```
+
 Установим и запустим filebeat:
 ```bash
 sudo apt-get install -y filebeat
@@ -5378,14 +5673,17 @@ sudo vi /etc/filebeat/filebeat.yml
 ```yaml
 filebeat.inputs:
 - type: log
+  enabled: true
   paths:
-    - /path/to/log
+    - /var/log/testapp/info.log
 ```
 
 Перезапустим filebeat:
 ```bash
 sudo systemctl restart filebeat.service
 ```
+
+Открываем Web интерфейс Kibana, создаём индекс и переходим в раздел Discovery. Изучаем логи, созданные тестовым приложением.
 
 Установим Elastic Search в Kubernetes  (!!! Не стоит делать это на локальном скластере!!!):
 ```bash
