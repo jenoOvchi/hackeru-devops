@@ -474,7 +474,7 @@ docker-compose --version
 Docker Agent templates Labels: java-docker-slave
 Enabled: yes
 Name: java-docker-slave
-Docker Image: java-docker-slave
+Docker Image: bibinwilson/jenkins-slave:latest
 Remote File System Root: /home/jenkins
 Connect method: Connect with SSH
 SSH key: Use configured SSH credentials
