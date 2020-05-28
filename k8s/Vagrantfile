@@ -1,0 +1,76 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.ssh.insert_key = false
+
+  config.vm.define "master" do |master|
+    master.vm.box = "ubuntu/xenial64"
+    master.vm.network "forwarded_port", guest: 80, host: 8080
+    master.vm.network "forwarded_port", guest: 443, host: 8443
+    master.vm.network "private_network", ip: "192.168.10.2"
+    master.vm.hostname = "master"
+    master.vm.provider "virtualbox" do |v|
+      v.memory = 1024
+      v.cpus = 1
+    end
+    master.vm.provision "shell", inline: <<-SHELL
+      sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' /etc/ssh/sshd_config    
+      sudo systemctl restart sshd
+      cat > /etc/hosts << EOF
+127.0.0.1	localhost
+255.255.255.255	broadcasthost
+192.168.10.2 master
+192.168.10.3 worker1
+192.168.10.4 worker2
+EOF
+    SHELL
+  end
+
+  config.vm.define "worker1" do |worker1|
+    worker1.vm.box = "ubuntu/xenial64"
+    worker1.vm.network "forwarded_port", guest: 80, host: 8081
+    worker1.vm.network "forwarded_port", guest: 443, host: 8444
+    worker1.vm.network "private_network", ip: "192.168.10.3"
+    worker1.vm.hostname = "worker1"
+    worker1.vm.provider "virtualbox" do |v|
+      v.memory = 1024
+      v.cpus = 1
+    end
+    worker1.vm.provision "shell", inline: <<-SHELL
+      sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' /etc/ssh/sshd_config    
+      sudo systemctl restart sshd
+      cat > /etc/hosts << EOF
+127.0.0.1	localhost
+255.255.255.255	broadcasthost
+192.168.10.2 master 
+192.168.10.3 worker1 
+192.168.10.4 worker2 
+EOF
+    SHELL
+  end
+
+  config.vm.define "worker2" do |worker2|
+    worker2.vm.box = "ubuntu/xenial64"
+    worker2.vm.network "forwarded_port", guest: 80, host: 8082
+    worker2.vm.network "forwarded_port", guest: 443, host: 8445
+    worker2.vm.network "private_network", ip: "192.168.10.4"
+    worker2.vm.hostname = "worker2"
+    worker2.vm.provider "virtualbox" do |v|
+      v.memory = 1024
+      v.cpus = 1
+    end
+    worker2.vm.provision "shell", inline: <<-SHELL
+      sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' /etc/ssh/sshd_config    
+      sudo systemctl restart sshd
+      cat > /etc/hosts << EOF
+127.0.0.1	localhost
+255.255.255.255	broadcasthost
+192.168.10.2 master 
+192.168.10.3 worker1 
+192.168.10.4 worker2 
+EOF
+    SHELL
+  end
+end

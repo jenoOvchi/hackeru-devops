@@ -5463,6 +5463,18 @@ cat info.log
 go get "github.com/Sirupsen/logrus"
 ```
 
+Изучим различные уровни логирования, доступные в рамках фреймворка:
+```go
+log.Debug("Useful debugging information.")
+log.Info("Something noteworthy happened!")
+log.Warn("You should probably take a look at this.")
+log.Error("Something failed but I'm not quitting.")
+// Calls os.Exit(1) after logging
+log.Fatal("Bye.")
+// Calls panic() after logging
+log.Panic("I'm bailing.")
+```
+
 Изменим тестовое приложение для демонстрации работы фреймворка:
 ```bash
 vi testapp.go
@@ -5472,7 +5484,7 @@ vi testapp.go
 package main
 
 import (
-    "log"
+    "os"
     log "github.com/Sirupsen/logrus"
 )
 
@@ -5499,18 +5511,6 @@ go build testapp.go
 ./testapp
 ls
 cat info.log
-```
-
-Изучим различные уровни логирования, доступные в рамках фреймворка:
-```go
-log.Debug("Useful debugging information.")
-log.Info("Something noteworthy happened!")
-log.Warn("You should probably take a look at this.")
-log.Error("Something failed but I'm not quitting.")
-// Calls os.Exit(1) after logging
-log.Fatal("Bye.")
-// Calls panic() after logging
-log.Panic("I'm bailing.")
 ```
 
 Изменим тестовое приложение для демонстрации работы различных уровней логирования:
@@ -5625,7 +5625,6 @@ go build testapp.go
 Запустим тестовое приложение и изучим созданный файл журнала:
 ```bash
 ./testapp
-ls
 cat /var/log/testapp/info.log
 ```
 
